@@ -85,7 +85,7 @@ RUN flux keygen
 
 RUN  git clone https://github.com/cmisale/flux-sched.git --branch gobind-dev --single-branch \ 
 	&& cd /root/flux-sched/ \
-	&& ./autogen.sh && PYTHON_VERSION=3.8 ./configure --prefix=/root/flux-install && make -j && make install \
+	&& ./autogen.sh && PYTHON_VERSION=3.8 ./configure --prefix=/root/flux-install && make && make install \
 	&& cp t/data/resource/jgfs/tiny.json /home \
 	&& cp -r resource/hlapi/bindings/c/.libs/* resource/.libs/* /root/flux-install/lib/ \
 	&& cp -r resource/hlapi/bindings/go/src/fluxcli /go/src/ \
