@@ -68,8 +68,8 @@ func NewPodGroupController(client kubernetes.Interface,
 	broadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: client.CoreV1().Events(v1.NamespaceAll)})
 
 	ctrl := &PodGroupController{
-		eventRecorder: broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "Coscheduling"}),
-		pgQueue:       workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "Coscheduling-queue"),
+		eventRecorder: broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "PodGroupController"}),
+		pgQueue:       workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "PodGroup"),
 	}
 
 	pgInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -93,16 +93,16 @@ func NewPodGroupController(client kubernetes.Interface,
 func (ctrl *PodGroupController) Run(workers int, stopCh <-chan struct{}) {
 	defer ctrl.pgQueue.ShutDown()
 
-	klog.Info("Starting coscheduling")
-	defer klog.Info("Shutting coscheduling")
+	klog.InfoS("Starting Pod Group controller")
+	defer klog.InfoS("Shutting Pod Group controller")
 
 	if !cache.WaitForCacheSync(stopCh, ctrl.pgListerSynced, ctrl.podListerSynced) {
-		klog.Error("Cannot sync caches")
+		klog.ErrorS(nil, "Cannot sync caches")
 		return
 	}
-	klog.Info("Coscheduling sync finished")
+	klog.InfoS("Pod Group sync finished")
 	for i := 0; i < workers; i++ {
-		go wait.Until(ctrl.sync, 0, stopCh)
+		go wait.Until(ctrl.worker, time.Second, stopCh)
 	}
 
 	<-stopCh
@@ -124,7 +124,7 @@ func (ctrl *PodGroupController) pgAdded(obj interface{}) {
 		pg.Status.ScheduleStartTime.Sub(pg.CreationTimestamp.Time) > 48*time.Hour {
 		return
 	}
-	klog.Infof("Enqueue key %v", key)
+	klog.InfoS("Enqueue podGroup ", "podGroup", key)
 	ctrl.pgQueue.Add(key)
 }
 
@@ -142,10 +142,10 @@ func (ctrl *PodGroupController) podAdded(obj interface{}) {
 	}
 	pg, err := ctrl.pgLister.PodGroups(pod.Namespace).Get(pgName)
 	if err != nil {
-		klog.Error(err)
+		klog.ErrorS(err, "Error while adding pod")
 		return
 	}
-	klog.V(5).Infof("Add pg %v when pod %v add", pg.Name, pod.Name)
+	klog.V(5).InfoS("Add pod group when pod gets added", "podGroup", klog.KObj(pg), "pod", klog.KObj(pod))
 	ctrl.pgAdded(pg)
 }
 
@@ -154,58 +154,63 @@ func (ctrl *PodGroupController) podUpdated(old, new interface{}) {
 	ctrl.podAdded(new)
 }
 
-// syncPG deals with one key off the queue.  It returns false when it's time to quit.
-func (ctrl *PodGroupController) sync() {
+func (ctrl *PodGroupController) worker() {
+	for ctrl.processNextWorkItem() {
+	}
+}
+
+// processNextWorkItem deals with one key off the queue.  It returns false when it's time to quit.
+func (ctrl *PodGroupController) processNextWorkItem() bool {
 	keyObj, quit := ctrl.pgQueue.Get()
 	if quit {
-		return
+		return false
 	}
 	defer ctrl.pgQueue.Done(keyObj)
 
-	key := keyObj.(string)
-	namespace, pgName, err := cache.SplitMetaNamespaceKey(key)
-	klog.V(4).Infof("Started PG processing %q", pgName)
-
-	// get PG to process
-	pg, err := ctrl.pgLister.PodGroups(namespace).Get(pgName)
-	ctx := context.TODO()
-	if err != nil {
-		if apierrs.IsNotFound(err) {
-			pg, err = ctrl.pgClient.SchedulingV1alpha1().PodGroups(namespace).Get(ctx, pgName, metav1.GetOptions{})
-			if err != nil && apierrs.IsNotFound(err) {
-				// PG was deleted in the meantime, ignore.
-				klog.V(3).Infof("PG %q deleted", pgName)
-				return
-			}
-		}
-		klog.Errorf("Error getting PodGroup %q: %v", pgName, err)
-		ctrl.pgQueue.AddRateLimited(keyObj)
-		return
+	key, ok := keyObj.(string)
+	if !ok {
+		ctrl.pgQueue.Forget(keyObj)
+		runtime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", keyObj))
+		return true
 	}
-	ctrl.syncHandler(ctx, pg)
+	if err := ctrl.syncHandler(key); err != nil {
+		runtime.HandleError(err)
+		klog.ErrorS(err, "Error syncing pod group", "podGroup", key)
+		return true
+	}
+	return true
 }
 
 // syncHandle syncs pod group and convert status
-func (ctrl *PodGroupController) syncHandler(ctx context.Context, pg *schedv1alpha1.PodGroup) {
-	key, err := cache.MetaNamespaceKeyFunc(pg)
+func (ctrl *PodGroupController) syncHandler(key string) error {
+	// Convert the namespace/name string into a distinct namespace and name
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		runtime.HandleError(err)
-		return
+		runtime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		return nil
 	}
-
 	defer func() {
 		if err != nil {
 			ctrl.pgQueue.AddRateLimited(key)
 			return
 		}
 	}()
+	pg, err := ctrl.pgLister.PodGroups(namespace).Get(name)
+	if apierrs.IsNotFound(err) {
+		klog.V(5).InfoS("Pod group has been deleted", "podGroup", key)
+		return nil
+	}
+	if err != nil {
+		klog.V(3).ErrorS(err, "Unable to retrieve pod group from store", "podGroup", key)
+		return err
+	}
 
 	pgCopy := pg.DeepCopy()
 	selector := labels.Set(map[string]string{util.PodGroupLabel: pgCopy.Name}).AsSelector()
 	pods, err := ctrl.podLister.List(selector)
 	if err != nil {
-		klog.Errorf("List pods for group %v failed: %v", pgCopy.Name, err)
-		return
+		klog.ErrorS(err, "List pods for group failed", "podGroup", klog.KObj(pgCopy))
+		return err
 	}
 
 	switch pgCopy.Status.Phase {
@@ -259,6 +264,7 @@ func (ctrl *PodGroupController) syncHandler(ctx context.Context, pg *schedv1alph
 	if err == nil {
 		ctrl.pgQueue.Forget(pg)
 	}
+	return err
 }
 
 func (ctrl *PodGroupController) patchPodGroup(old, new *schedv1alpha1.PodGroup) error {

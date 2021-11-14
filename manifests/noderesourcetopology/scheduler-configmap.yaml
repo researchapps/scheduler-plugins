@@ -17,10 +17,15 @@ data:
             filter:
               enabled:
                 - name: NodeResourceTopologyMatch
+            score:
+              enabled:
+                - name: NodeResourceTopologyMatch
           # optional plugin configs
           pluginConfig:
           - name: NodeResourceTopologyMatch
             args:
               kubeconfigpath: "/etc/kubernetes/scheduler.conf"
               namespaces:
-              - "test-namespace"
+              - "default"
+              scoringStrategy:
+                type: "LeastAllocated"

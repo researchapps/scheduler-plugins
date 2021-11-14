@@ -19,7 +19,6 @@ package loadvariationriskbalancing
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -41,6 +40,7 @@ import (
 
 	pluginConfig "sigs.k8s.io/scheduler-plugins/pkg/apis/config"
 	"sigs.k8s.io/scheduler-plugins/pkg/apis/config/v1beta1"
+	testutil "sigs.k8s.io/scheduler-plugins/test/util"
 )
 
 var _ framework.SharedLister = &testSharedLister{}
@@ -98,7 +98,8 @@ func TestNew(t *testing.T) {
 	cs := testClientSet.NewSimpleClientset()
 	informerFactory := informers.NewSharedInformerFactory(cs, 0)
 	snapshot := newTestSharedLister(nil, nil)
-	fh, err := NewFramework(registeredPlugins, []config.PluginConfig{loadVariationRiskBalancingConfig}, runtime.WithClientSet(cs),
+	fh, err := testutil.NewFramework(registeredPlugins, []config.PluginConfig{loadVariationRiskBalancingConfig},
+		"default-scheduler", runtime.WithClientSet(cs),
 		runtime.WithInformerFactory(informerFactory), runtime.WithSnapshotSharedLister(snapshot))
 	assert.Nil(t, err)
 	p, err := New(&loadVariationRiskBalancingArgs, fh)
@@ -346,7 +347,8 @@ func TestScore(t *testing.T) {
 			informerFactory := informers.NewSharedInformerFactory(cs, 0)
 			snapshot := newTestSharedLister(nil, nodes)
 
-			fh, err := NewFramework(registeredPlugins, []config.PluginConfig{loadVariationRiskBalancingConfig}, runtime.WithClientSet(cs),
+			fh, err := testutil.NewFramework(registeredPlugins, []config.PluginConfig{loadVariationRiskBalancingConfig},
+				"default-scheduler", runtime.WithClientSet(cs),
 				runtime.WithInformerFactory(informerFactory), runtime.WithSnapshotSharedLister(snapshot))
 			assert.Nil(t, err)
 			p, _ := New(&loadVariationRiskBalancingArgs, fh)
@@ -378,10 +380,7 @@ func newTestSharedLister(pods []*v1.Pod, nodes []*v1.Node) *testSharedLister {
 		if _, ok := nodeInfoMap[node.Name]; !ok {
 			nodeInfoMap[node.Name] = framework.NewNodeInfo()
 		}
-		err := nodeInfoMap[node.Name].SetNode(node)
-		if err != nil {
-			log.Fatal(err)
-		}
+		nodeInfoMap[node.Name].SetNode(node)
 	}
 
 	for _, v := range nodeInfoMap {
@@ -423,14 +422,4 @@ func getPodWithContainersAndOverhead(overhead int64, initCPUReq int64, initMemRe
 		newPod.Spec.Containers[i].Resources.Limits[v1.ResourceMemory] = *resource.NewQuantity(contMemReq[i], resource.DecimalSI)
 	}
 	return newPod.Obj()
-}
-
-func NewFramework(fns []st.RegisterPluginFunc, args []config.PluginConfig, opts ...runtime.Option) (framework.Framework, error) {
-	registry := runtime.Registry{}
-	plugins := &config.Plugins{}
-	var pluginConfigs []config.PluginConfig
-	for _, f := range fns {
-		f(&registry, plugins, pluginConfigs)
-	}
-	return runtime.NewFramework(registry, plugins, args, opts...)
 }

@@ -1,3 +1,19 @@
+/*
+Copyright 2021 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package integration
 
 import (
@@ -10,7 +26,6 @@ import (
 
 	"github.com/paypal/load-watcher/pkg/watcher"
 	"github.com/stretchr/testify/assert"
-
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +44,6 @@ import (
 )
 
 func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
-	registry := fwkruntime.Registry{loadvariationriskbalancing.Name: loadvariationriskbalancing.New}
 	metrics := watcher.WatcherMetrics{
 		Window: watcher.Window{},
 		Data: watcher.Data{
@@ -69,37 +83,34 @@ func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
 		assert.Nil(t, err)
 		resp.Write(bytes)
 	}))
-
 	defer server.Close()
-	profile := schedapi.KubeSchedulerProfile{
-		SchedulerName: v1.DefaultSchedulerName,
-		Plugins: &schedapi.Plugins{
-			Score: &schedapi.PluginSet{
-				Enabled: []schedapi.Plugin{
-					{Name: loadvariationriskbalancing.Name},
-				},
-				Disabled: []schedapi.Plugin{
-					{Name: "*"},
-				},
-			},
+
+	cfg, err := util.NewDefaultSchedulerComponentConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Profiles[0].Plugins.Score = schedapi.PluginSet{
+		Enabled: []schedapi.Plugin{
+			{Name: loadvariationriskbalancing.Name},
 		},
-		PluginConfig: []schedapi.PluginConfig{
-			{
-				Name: loadvariationriskbalancing.Name,
-				Args: &config.LoadVariationRiskBalancingArgs{
-					WatcherAddress:     server.URL,
-					SafeVarianceMargin: v1beta1.DefaultSafeVarianceMargin,
-				},
-			},
+		Disabled: []schedapi.Plugin{
+			{Name: "*"},
 		},
 	}
+	cfg.Profiles[0].PluginConfig = append(cfg.Profiles[0].PluginConfig, schedapi.PluginConfig{
+		Name: loadvariationriskbalancing.Name,
+		Args: &config.LoadVariationRiskBalancingArgs{
+			WatcherAddress:     server.URL,
+			SafeVarianceMargin: v1beta1.DefaultSafeVarianceMargin,
+		},
+	})
 
 	testCtx := util.InitTestSchedulerWithOptions(
 		t,
-		testutils.InitTestMaster(t, "sched-trimaran", nil),
+		testutils.InitTestAPIServer(t, "sched-trimaran", nil),
 		true,
-		scheduler.WithProfiles(profile),
-		scheduler.WithFrameworkOutOfTreeRegistry(registry),
+		scheduler.WithProfiles(cfg.Profiles...),
+		scheduler.WithFrameworkOutOfTreeRegistry(fwkruntime.Registry{loadvariationriskbalancing.Name: loadvariationriskbalancing.New}),
 	)
 
 	defer testutils.CleanupTest(t, testCtx)

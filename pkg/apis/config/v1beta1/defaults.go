@@ -68,6 +68,11 @@ var (
 	DefaultMetricProviderType = pluginConfig.KubernetesMetricsServer
 
 	defaultKubeConfigPath string = "/etc/kubernetes/scheduler.conf"
+
+	defaultResourceSpec = []schedulerconfig.ResourceSpec{
+		{Name: string(v1.ResourceCPU), Weight: 1},
+		{Name: string(v1.ResourceMemory), Weight: 1},
+	}
 )
 
 // SetDefaultsCoschedulingArgs sets the default parameters for Coscheduling plugin.
@@ -95,9 +100,7 @@ func SetDefaultsNodeResourcesAllocatableArgs(obj *NodeResourcesAllocatableArgs) 
 
 // SetDefaultsCapacitySchedulingArgs sets the default parameters for CapacityScheduling plugin.
 func SetDefaultsCapacitySchedulingArgs(obj *CapacitySchedulingArgs) {
-	if obj.KubeConfigPath == nil {
-		obj.KubeConfigPath = &defaultKubeConfigPath
-	}
+	// TODO(k/k#96427): get KubeConfigPath and KubeMaster from configuration or command args.
 }
 
 // SetDefaultTargetLoadPackingArgs sets the default parameters for TargetLoadPacking plugin
@@ -112,15 +115,14 @@ func SetDefaultTargetLoadPackingArgs(args *TargetLoadPackingArgs) {
 	if args.TargetUtilization == nil || *args.TargetUtilization <= 0 {
 		args.TargetUtilization = &DefaultTargetUtilizationPercent
 	}
+	if args.WatcherAddress == nil && args.MetricProvider.Type == "" {
+		args.MetricProvider.Type = MetricProviderType(DefaultMetricProviderType)
+	}
 }
 
 // SetDefaultLoadVariationRiskBalancingArgs sets the default parameters for LoadVariationRiskBalancing plugin
 func SetDefaultLoadVariationRiskBalancingArgs(args *LoadVariationRiskBalancingArgs) {
-	metricProviderType := string(args.MetricProvider.Type)
-	validMetricProviderType := metricProviderType == string(pluginConfig.KubernetesMetricsServer) ||
-		metricProviderType == string(pluginConfig.Prometheus) ||
-		metricProviderType == string(pluginConfig.SignalFx)
-	if args.WatcherAddress == nil && !validMetricProviderType {
+	if args.WatcherAddress == nil && args.MetricProvider.Type == "" {
 		args.MetricProvider.Type = MetricProviderType(DefaultMetricProviderType)
 	}
 	if args.SafeVarianceMargin == nil || *args.SafeVarianceMargin < 0 {
@@ -138,5 +140,23 @@ func SetDefaultsNodeResourceTopologyMatchArgs(obj *NodeResourceTopologyMatchArgs
 	}
 	if len(obj.Namespaces) == 0 {
 		obj.Namespaces = []string{metav1.NamespaceDefault}
+	}
+
+	if obj.ScoringStrategy == nil {
+		obj.ScoringStrategy = &ScoringStrategy{
+			Type:      LeastAllocated,
+			Resources: defaultResourceSpec,
+		}
+	}
+
+	if len(obj.ScoringStrategy.Resources) == 0 {
+		// If no resources specified, use the default set.
+		obj.ScoringStrategy.Resources = append(obj.ScoringStrategy.Resources, defaultResourceSpec...)
+	}
+
+	for i := range obj.ScoringStrategy.Resources {
+		if obj.ScoringStrategy.Resources[i].Weight == 0 {
+			obj.ScoringStrategy.Resources[i].Weight = 1
+		}
 	}
 }

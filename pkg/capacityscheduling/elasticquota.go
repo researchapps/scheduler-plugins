@@ -20,6 +20,7 @@ import (
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
+	"sigs.k8s.io/scheduler-plugins/pkg/util"
 )
 
 type ElasticQuotaInfos map[string]*ElasticQuotaInfo
@@ -36,17 +37,17 @@ func (e ElasticQuotaInfos) clone() ElasticQuotaInfos {
 	return elasticQuotas
 }
 
-func (e ElasticQuotaInfos) aggregatedMinOverUsedWithPod(podRequest framework.Resource) bool {
+func (e ElasticQuotaInfos) aggregatedUsedOverMinWith(podRequest framework.Resource) bool {
 	used := framework.NewResource(nil)
 	min := framework.NewResource(nil)
 
 	for _, elasticQuotaInfo := range e {
-		used.Add(elasticQuotaInfo.Used.ResourceList())
-		min.Add(elasticQuotaInfo.Min.ResourceList())
+		used.Add(util.ResourceList(elasticQuotaInfo.Used))
+		min.Add(util.ResourceList(elasticQuotaInfo.Min))
 	}
 
-	used.Add(podRequest.ResourceList())
-	return moreThanMin(*used, *min)
+	used.Add(util.ResourceList(&podRequest))
+	return cmp(used, min)
 }
 
 // ElasticQuotaInfo is a wrapper to a ElasticQuota with information.
@@ -86,21 +87,16 @@ func (e *ElasticQuotaInfo) unreserveResource(request framework.Resource) {
 	}
 }
 
-func (e *ElasticQuotaInfo) overUsed(podRequest framework.Resource, resource *framework.Resource) bool {
-	if e.Used.MilliCPU+podRequest.MilliCPU > resource.MilliCPU {
-		return true
-	}
+func (e *ElasticQuotaInfo) usedOverMinWith(podRequest *framework.Resource) bool {
+	return cmp2(podRequest, e.Used, e.Min)
+}
 
-	if e.Used.Memory+podRequest.Memory > resource.Memory {
-		return true
-	}
+func (e *ElasticQuotaInfo) usedOverMaxWith(podRequest *framework.Resource) bool {
+	return cmp2(podRequest, e.Used, e.Max)
+}
 
-	for rName, rQuant := range podRequest.ScalarResources {
-		if rQuant+e.Used.ScalarResources[rName] > resource.ScalarResources[rName] {
-			return true
-		}
-	}
-	return false
+func (e *ElasticQuotaInfo) usedOverMin() bool {
+	return cmp(e.Used, e.Min)
 }
 
 func (e *ElasticQuotaInfo) clone() *ElasticQuotaInfo {
@@ -140,7 +136,7 @@ func (e *ElasticQuotaInfo) addPodIfNotPresent(pod *v1.Pod) error {
 
 	e.pods.Insert(key)
 	podRequest := computePodResourceRequest(pod)
-	e.reserveResource(podRequest.Resource)
+	e.reserveResource(*podRequest)
 
 	return nil
 }
@@ -157,21 +153,26 @@ func (e *ElasticQuotaInfo) deletePodIfPresent(pod *v1.Pod) error {
 
 	e.pods.Delete(key)
 	podRequest := computePodResourceRequest(pod)
-	e.unreserveResource(podRequest.Resource)
+	e.unreserveResource(*podRequest)
 
 	return nil
 }
 
-func moreThanMin(used, min framework.Resource) bool {
-	if used.MilliCPU > min.MilliCPU {
-		return true
-	}
-	if used.Memory > min.Memory {
+func cmp(x, y *framework.Resource) bool {
+	return cmp2(x, &framework.Resource{}, y)
+}
+
+func cmp2(x1, x2, y *framework.Resource) bool {
+	if x1.MilliCPU+x2.MilliCPU > y.MilliCPU {
 		return true
 	}
 
-	for rName, rQuant := range used.ScalarResources {
-		if rQuant > min.ScalarResources[rName] {
+	if x1.Memory+x2.Memory > y.Memory {
+		return true
+	}
+
+	for rName, rQuant := range x1.ScalarResources {
+		if rQuant+x2.ScalarResources[rName] > y.ScalarResources[rName] {
 			return true
 		}
 	}
