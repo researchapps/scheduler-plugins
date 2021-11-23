@@ -70,8 +70,8 @@ RUN git clone https://github.com/flux-framework/flux-core.git --branch v0.25.0 -
 
 # Install go 15
 WORKDIR /home
-RUN wget https://dl.google.com/go/go1.15.2.linux-amd64.tar.gz  && tar -xvf go1.15.2.linux-amd64.tar.gz && \
-         mv go /usr/local  &&  rm go1.15.2.linux-amd64.tar.gz
+RUN wget https://dl.google.com/go/go1.16.10.linux-amd64.tar.gz  && tar -xvf go1.16.10.linux-amd64.tar.gz && \
+         mv go /usr/local  &&  rm go1.16.10.linux-amd64.tar.gz
 
 ENV GOROOT "/usr/local/go"
 ENV GOPATH "/go"
@@ -102,9 +102,8 @@ RUN apt-get purge -y git  python3-dev \
     python3-setuptools \
     && apt-get -y clean && apt-get -y autoremove
 
-RUN cd /go/src/fluxcli &&  go mod init
 WORKDIR /go/src
-RUN GOOS=linux CGO_CFLAGS="-I/root/flux-sched/resource/hlapi/bindings/c -I/root/flux-install/include" CGO_LDFLAGS="-L/root/flux-install/lib/ -lreapi_cli  -L/root/flux-install/lib/ -lresource -lstdc++ -lczmq -ljansson -lhwloc -lboost_system -L/root/flux-install/lib -lflux-hostlist -lboost_graph -lyaml-cpp" go install -v fluxcli
+RUN cd fluxcli &&  go mod init fluxcli && go mod tidy &&  GOOS=linux CGO_CFLAGS="-I/root/flux-sched/resource/hlapi/bindings/c -I/root/flux-install/include" CGO_LDFLAGS="-L/root/flux-install/lib/ -lreapi_cli  -L/root/flux-install/lib/ -lresource -lstdc++ -lczmq -ljansson -lhwloc -lboost_system -L/root/flux-install/lib -lflux-hostlist -lboost_graph -lyaml-cpp" go install fluxcli 
 
 
 WORKDIR /go/src/sigs.k8s.io/scheduler-plugins
