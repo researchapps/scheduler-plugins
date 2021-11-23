@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The Kubernetes Authors.
+Copyright 2021 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,9 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package util
+// +k8s:deepcopy-gen=package
+// +k8s:conversion-gen=sigs.k8s.io/scheduler-plugins/pkg/apis/config
+// +k8s:defaulter-gen=TypeMeta
+// +groupName=kubescheduler.config.k8s.io
 
-const (
-	// PodGroupLabel is the default label of coscheduling
-	PodGroupLabel = "pod-group.scheduling.sigs.k8s.io"
-)
+// Package v1beta2 is the v1beta2 version of the API.
+package v1beta2 // import "sigs.k8s.io/scheduler-plugins/pkg/apis/config/v1beta2"
