@@ -1,4 +1,4 @@
-FROM ubuntu:20.10 as basegoflux
+FROM ubuntu:latest as basegoflux
 
 ENV TZ="America/Los_Angeles"
 ENV DEBIAN_FRONTEND="noninteractive"
@@ -124,7 +124,7 @@ RUN mkdir -p /home/data/jgf/ && mv /home/tiny.json /home/data/jgf/
 
 
 
-FROM ubuntu:20.10 
+FROM ubuntu:latest 
 
 # Copy Flux libraries and headers
 COPY --from=basegoflux /root/flux-install /root/flux-install/
@@ -136,7 +136,9 @@ COPY --from=basegoflux /home/data/jgf/ /home/data/jgf/
 
 # Reinstall dependencies we need
 #Fluxion
-RUN apt-get update && apt-get -y upgrade && apt-get -y --no-install-recommends install \
+RUN  apt -y upgrade && apt -u update && apt -y clean && apt-get -y autoremove
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata && apt -y --no-install-recommends install \
     libhwloc-dev \
     libboost-dev \
     libboost-system-dev \

@@ -3,6 +3,7 @@ module sigs.k8s.io/scheduler-plugins
 go 1.16
 
 require (
+	fluxcli v0.0.0
 	github.com/google/go-cmp v0.5.5
 	github.com/google/uuid v1.1.2
 	github.com/k8stopologyawareschedwg/noderesourcetopology-api v0.0.10
@@ -30,6 +31,7 @@ require (
 )
 
 replace (
+	fluxcli => /go/src/fluxcli
 	k8s.io/api => k8s.io/api v0.22.3
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.22.3
 	k8s.io/apimachinery => k8s.io/apimachinery v0.22.3
