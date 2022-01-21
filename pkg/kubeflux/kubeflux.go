@@ -18,10 +18,10 @@ package kubeflux
 
 import (
 	"context"
-	"errors"
-	"fluxcli"
+	"google.golang.org/grpc"
+	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
+	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
 	"fmt"
-	"io/ioutil"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -31,16 +31,14 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
-	// "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/jobspec"
-	// "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
 	"sync"
 	"time"
+	
 )
 
 type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
-	fluxctx        *fluxcli.ReapiCtx
 	podNameToJobId map[string]uint64
 }
 
@@ -70,12 +68,7 @@ func (s *fluxStateData) Clone() framework.StateData {
 func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
 	klog.Infof("Examining the pod")
 
-	fluxjbs := jobspec.InspectPodInfo(pod)
-	currenttime := time.Now()
-	filename := fmt.Sprintf("/home/data/jobspecs/jobspec-%s-%s.yaml", currenttime.Format(time.RFC3339Nano), pod.Name)
-	jobspec.CreateJobSpecYaml(fluxjbs, filename)
-
-	nodename, err := kf.askFlux(ctx, pod, filename)
+	nodename, err := kf.askFlux(pod)
 	if err != nil {
 		return framework.NewStatus(framework.Unschedulable, err.Error())
 	}
@@ -109,7 +102,7 @@ func (kf *KubeFlux) PreFilterExtensions() framework.PreFilterExtensions {
 	return nil
 }
 
-func (kf *KubeFlux) askFlux(ctx context.Context, pod *v1.Pod, filename string) (string, error) {
+func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 
 	// clean up previous match if a pod has already allocated previously
 	kf.mutex.Lock()
@@ -123,44 +116,41 @@ func (kf *KubeFlux) askFlux(ctx context.Context, pod *v1.Pod, filename string) (
 		kf.mutex.Unlock()
 	}
 
-	spec, err := ioutil.ReadFile(filename)
+
+	jobspec := utils.InspectPodInfo(pod)
+	conn, err := grpc.Dial("127.0.0.1:4242", grpc.WithInsecure())
+	// or with sockets
+	// conn, err := grpc.Dial(
+	// 	sock,
+	// 	grpc.WithInsecure(),
+	// 	grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+	// 		return net.DialTimeout("unix", addr, timeout)
+	// 	}))
 	if err != nil {
-		return "", errors.New("Error reading jobspec")
+		fmt.Println("[FluxClient] Error connecting to server: %v", err)
+		return  "", err
 	}
-	start := time.Now()
-	
-	
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
-	if err != nil {
-		panic(err.Error())
-	}
-	// fmt.Printf("[RQClient] Connection %v\n", conn)
 	defer conn.Close()
-	grpcclient := pb.NewCommandMapperClient(conn)
 
+	grpcclient := pb.NewFluxcliServiceClient(conn)
 	_, cancel := context.WithTimeout(context.Background(), 200*time.Second)
-	defer cancel()
-	jobspec := &pb.MatchRequest{
-		Ps: &pb.PodSpec{
-			Id:        pod_jobspec.ID,
-			Container: pod_jobspec.Containers[0].Image,
-			MilliCPU:  pod_jobspec.MilliCPU[0],
-			Memory:    pod_jobspec.Memory[0],
-			Gpu:       pod_jobspec.Gpu[0],
-			Storage:   pod_jobspec.Storage[0],
-		},
-		Request: subcmd}
+	defer cancel()	
 
-	r, err2 := grpcclient.Match(context.Background(), jobspec)
+	request := &pb.MatchRequest{
+		Ps: jobspec,
+		Request: "allocate"}
+
+	r, err2 := grpcclient.Match(context.Background(), request)
 	if err2 != nil {
-		fmt.Printf("[RQClient] did not receive any match response: %v\n", err2)
-		return ""
+		fmt.Printf("[FluxClient] did not receive any match response: %v\n", err2)
+		return "", err
 	}
 
-	fmt.Printf("[RQClient] response nodeID %s\n", r.GetNodeID())
-	fmt.Printf("[RQClient] response podID %s\n", r.GetPodID())
-	nodename := r.GetNodeID()
+	fmt.Printf("[FluxClient] response nodeID %s\n", r.GetNodeID())
+	fmt.Printf("[FluxClient] response podID %s\n", r.GetPodID())
 
+	nodename := r.GetNodeID()
+	jobid := uint64(r.GetJobID())
 
 	kf.mutex.Lock()
 	kf.podNameToJobId[pod.Name] = jobid
@@ -177,8 +167,8 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) {
 	fmt.Printf("Cancel flux job: %v for pod %s\n", jobid, podName)
 
 	start := time.Now()
-	err := fluxcli.ReapiCliCancel(kf.fluxctx, int64(jobid), false)
-
+	//err := fluxcli.ReapiCliCancel(kf.fluxctx, int64(jobid), false)
+	err := 1
 	if err == 0 {
 		delete(kf.podNameToJobId, podName)
 	} else {
@@ -214,7 +204,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 	klog.Infof("KubeFlux starts")
 
-	kf := &KubeFlux{handle: handle, fluxctx: fctx, podNameToJobId: make(map[string]uint64)}
+	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
 
 	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: kf.updatePod,
