@@ -18,11 +18,12 @@ package kubeflux
 
 import (
 	"context"
-	"google.golang.org/grpc"
-	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
-	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
 	"fmt"
-	"k8s.io/api/core/v1"
+	"sync"
+	"time"
+
+	"google.golang.org/grpc"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -31,9 +32,8 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
-	"sync"
-	"time"
-	
+	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
+	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
 )
 
 type KubeFlux struct {
@@ -116,28 +116,21 @@ func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 		kf.mutex.Unlock()
 	}
 
-
 	jobspec := utils.InspectPodInfo(pod)
 	conn, err := grpc.Dial("127.0.0.1:4242", grpc.WithInsecure())
-	// or with sockets
-	// conn, err := grpc.Dial(
-	// 	sock,
-	// 	grpc.WithInsecure(),
-	// 	grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-	// 		return net.DialTimeout("unix", addr, timeout)
-	// 	}))
+
 	if err != nil {
 		fmt.Println("[FluxClient] Error connecting to server: %v", err)
-		return  "", err
+		return "", err
 	}
 	defer conn.Close()
 
 	grpcclient := pb.NewFluxcliServiceClient(conn)
 	_, cancel := context.WithTimeout(context.Background(), 200*time.Second)
-	defer cancel()	
+	defer cancel()
 
 	request := &pb.MatchRequest{
-		Ps: jobspec,
+		Ps:      jobspec,
 		Request: "allocate"}
 
 	r, err2 := grpcclient.Match(context.Background(), request)
@@ -154,22 +147,49 @@ func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 
 	kf.mutex.Lock()
 	kf.podNameToJobId[pod.Name] = jobid
-	fmt.Println("Check job set:")
-	fmt.Println(kf.podNameToJobId)
+	fmt.Println("Check job set:\n", kf.podNameToJobId)
 	kf.mutex.Unlock()
 
 	return nodename, nil
 }
 
-func (kf *KubeFlux) cancelFluxJobForPod(podName string) {
+func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 	jobid := kf.podNameToJobId[podName]
 
 	fmt.Printf("Cancel flux job: %v for pod %s\n", jobid, podName)
 
 	start := time.Now()
 	//err := fluxcli.ReapiCliCancel(kf.fluxctx, int64(jobid), false)
-	err := 1
-	if err == 0 {
+
+	conn, err := grpc.Dial("127.0.0.1:4242", grpc.WithInsecure())
+	// or with sockets
+	// conn, err := grpc.Dial(
+	// 	sock,
+	// 	grpc.WithInsecure(),
+	// 	grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+	// 		return net.DialTimeout("unix", addr, timeout)
+	// 	}))
+	if err != nil {
+		fmt.Println("[FluxClient] Error connecting to server: %v", err)
+		return err
+	}
+	defer conn.Close()
+
+	grpcclient := pb.NewFluxcliServiceClient(conn)
+	_, cancel := context.WithTimeout(context.Background(), 200*time.Second)
+	defer cancel()
+
+	request := &pb.CancelRequest{
+		JobID: int64(jobid),
+	}
+
+	res, err := grpcclient.Cancel(context.Background(), request)
+	if err != nil {
+		fmt.Printf("[FluxClient] did not receive any cancel response: %v\n", err)
+		return err
+	}
+
+	if res.Error == 0 {
 		delete(kf.podNameToJobId, podName)
 	} else {
 		fmt.Printf("Failed to delete pod %s from the podname-jobid map.\n", podName)
@@ -181,6 +201,7 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) {
 	fmt.Printf("Job cancellation for pod %s result: %d\n", podName, err)
 	fmt.Println("Check job set: after delete")
 	fmt.Println(kf.podNameToJobId)
+	return nil
 }
 
 // initialize and return a new Flux Plugin
@@ -201,7 +222,6 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	factory := informers.NewSharedInformerFactory(clientset, 0)
 	podInformer := factory.Core().V1().Pods().Informer()
 
-
 	klog.Infof("KubeFlux starts")
 
 	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
@@ -221,10 +241,8 @@ func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
 	fmt.Println("updatePod event handler")
 	oldPod := oldObj.(*v1.Pod)
 	newPod := newObj.(*v1.Pod)
-	fmt.Println(oldPod)
-	fmt.Println(newPod)
-	fmt.Println(oldPod.Name, oldPod.Status)
-	fmt.Println(newPod.Name, newPod.Status)
+	// fmt.Println("OLD ", oldPod.Name, oldPod.Status.Phase)
+	// fmt.Println("NEW ", newPod.Name, newPod.Status.Phase)
 
 	switch newPod.Status.Phase {
 	case v1.PodPending:
