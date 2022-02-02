@@ -1,12 +1,28 @@
+/*
+Copyright 2022 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package utils
 
 import (
-	"fmt"
-
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 )
 
+// InspectPodInfo takes a pod object and returns the pod.spec
 func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
 	ps := new(pb.PodSpec)
 	ps.Id = pod.Name
@@ -43,7 +59,7 @@ func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
 	ps.Gpu = gpu.Value()
 	ps.Storage = specRequests.StorageEphemeral().Value()
 
-	fmt.Printf("[Jobspec] Pod spec: CPU %v/%v-milli, memory %v/%v-milli, GPU %v, storage %v\n", ps.Cpu, specRequests.Cpu().MilliValue(),
+	klog.Infof("[Jobspec] Pod spec: CPU %v/%v-milli, memory %v/%v-milli, GPU %v, storage %v", ps.Cpu, specRequests.Cpu().MilliValue(),
 		ps.Memory, specRequests.Memory().MilliValue(), ps.Gpu, ps.Storage)
 
 	return ps
