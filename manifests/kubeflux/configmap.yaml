@@ -10,9 +10,13 @@ data:
     leaderElection:
       leaderElect: false
     profiles:
-    - schedulerName: default-scheduler
     - schedulerName: kubeflux
       plugins:
+        queueSort:
+          enabled:
+          - name: Coscheduling
+          disabled:
+          - name: '*'
         score:
           disabled:
           - name: '*'

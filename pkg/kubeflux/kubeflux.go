@@ -239,10 +239,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 // EventHandlers
 func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
 	fmt.Println("updatePod event handler")
-	oldPod := oldObj.(*v1.Pod)
 	newPod := newObj.(*v1.Pod)
-	// fmt.Println("OLD ", oldPod.Name, oldPod.Status.Phase)
-	// fmt.Println("NEW ", newPod.Name, newPod.Status.Phase)
 
 	switch newPod.Status.Phase {
 	case v1.PodPending:

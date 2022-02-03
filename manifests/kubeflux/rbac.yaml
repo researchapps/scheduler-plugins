@@ -138,6 +138,14 @@ rules:
       - create
       - patch
       - update
+  - apiGroups:
+      - "scheduling.sigs.k8s.io"
+    resources:
+      - podgroups
+    verbs:
+      - watch
+      - list
+
 ---
 apiVersion: v1
 kind: ServiceAccount
