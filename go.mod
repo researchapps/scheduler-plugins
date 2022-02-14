@@ -11,6 +11,8 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	gonum.org/v1/gonum v0.6.2
+	google.golang.org/grpc v1.38.0
+	google.golang.org/protobuf v1.26.0
 	k8s.io/api v0.22.3
 	k8s.io/apiextensions-apiserver v0.0.0
 	k8s.io/apimachinery v0.22.3

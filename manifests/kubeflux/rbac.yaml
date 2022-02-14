@@ -9,6 +9,8 @@ rules:
       - namespaces
     verbs:
       - list
+      - get
+      - watch
   - apiGroups:
       - ""
     resources:

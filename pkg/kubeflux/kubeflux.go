@@ -1,5 +1,5 @@
 /*
-Copyright © 2021 IBM Corporation
+Copyright 2022 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package kubeflux
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -45,10 +44,8 @@ type KubeFlux struct {
 var _ framework.PreFilterPlugin = &KubeFlux{}
 var _ framework.FilterPlugin = &KubeFlux{}
 
-// let's give it a name
-const (
-	Name = "KubeFlux"
-)
+// Name is the name of the plugin used in the Registry and configurations.
+const Name = "KubeFlux"
 
 func (kf *KubeFlux) Name() string {
 	return Name
@@ -74,11 +71,11 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 	}
 
 	if nodename == "NONE" {
-		fmt.Println("Pod cannot be scheduled by KubeFlux, nodename ", nodename)
+		klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodename)
 		return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux, nodename "+nodename)
 	}
 
-	fmt.Println("Node Selected: ", nodename)
+	klog.Info("Node Selected: ", nodename)
 
 	state.Write(framework.StateKey(pod.Name), &fluxStateData{nodeName: nodename})
 
@@ -86,12 +83,12 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 }
 
 func (kf *KubeFlux) Filter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
-	fmt.Println("Filtering input node ", nodeInfo.Node().Name)
+	klog.Info("Filtering input node ", nodeInfo.Node().Name)
 	if v, e := cycleState.Read(framework.StateKey(pod.Name)); e == nil {
 		if value, ok := v.(*fluxStateData); ok && value.nodeName != nodeInfo.Node().Name {
 			return framework.NewStatus(framework.Unschedulable, "pod is not permitted")
 		} else {
-			fmt.Println("Filter: node selected by Flux ", value.nodeName)
+			klog.Info("Filter: node selected by Flux ", value.nodeName)
 		}
 	}
 
@@ -103,14 +100,13 @@ func (kf *KubeFlux) PreFilterExtensions() framework.PreFilterExtensions {
 }
 
 func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
-
 	// clean up previous match if a pod has already allocated previously
 	kf.mutex.Lock()
 	_, isPodAllocated := kf.podNameToJobId[pod.Name]
 	kf.mutex.Unlock()
 
 	if isPodAllocated {
-		fmt.Println("Clean up previous allocation")
+		klog.Info("Clean up previous allocation")
 		kf.mutex.Lock()
 		kf.cancelFluxJobForPod(pod.Name)
 		kf.mutex.Unlock()
@@ -120,7 +116,7 @@ func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 	conn, err := grpc.Dial("127.0.0.1:4242", grpc.WithInsecure())
 
 	if err != nil {
-		fmt.Println("[FluxClient] Error connecting to server: %v", err)
+		klog.Errorf("[FluxClient] Error connecting to server: %v", err)
 		return "", err
 	}
 	defer conn.Close()
@@ -135,19 +131,19 @@ func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 
 	r, err2 := grpcclient.Match(context.Background(), request)
 	if err2 != nil {
-		fmt.Printf("[FluxClient] did not receive any match response: %v\n", err2)
+		klog.Errorf("[FluxClient] did not receive any match response: %v", err2)
 		return "", err
 	}
 
-	fmt.Printf("[FluxClient] response nodeID %s\n", r.GetNodeID())
-	fmt.Printf("[FluxClient] response podID %s\n", r.GetPodID())
+	klog.Infof("[FluxClient] response nodeID %s", r.GetNodeID())
+	klog.Infof("[FluxClient] response podID %s", r.GetPodID())
 
 	nodename := r.GetNodeID()
 	jobid := uint64(r.GetJobID())
 
 	kf.mutex.Lock()
 	kf.podNameToJobId[pod.Name] = jobid
-	fmt.Println("Check job set:\n", kf.podNameToJobId)
+	klog.Info("Check job set: ", kf.podNameToJobId)
 	kf.mutex.Unlock()
 
 	return nodename, nil
@@ -156,7 +152,7 @@ func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 	jobid := kf.podNameToJobId[podName]
 
-	fmt.Printf("Cancel flux job: %v for pod %s\n", jobid, podName)
+	klog.Infof("Cancel flux job: %v for pod %s", jobid, podName)
 
 	start := time.Now()
 	//err := fluxcli.ReapiCliCancel(kf.fluxctx, int64(jobid), false)
@@ -170,7 +166,7 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 	// 		return net.DialTimeout("unix", addr, timeout)
 	// 	}))
 	if err != nil {
-		fmt.Println("[FluxClient] Error connecting to server: %v", err)
+		klog.Errorf("[FluxClient] Error connecting to server: %v", err)
 		return err
 	}
 	defer conn.Close()
@@ -185,22 +181,24 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 
 	res, err := grpcclient.Cancel(context.Background(), request)
 	if err != nil {
-		fmt.Printf("[FluxClient] did not receive any cancel response: %v\n", err)
+		klog.Errorf("[FluxClient] did not receive any cancel response: %v", err)
 		return err
 	}
 
 	if res.Error == 0 {
 		delete(kf.podNameToJobId, podName)
 	} else {
-		fmt.Printf("Failed to delete pod %s from the podname-jobid map.\n", podName)
+		klog.Warningf("Failed to delete pod %s from the podname-jobid map.", podName)
 	}
 
 	elapsed := metrics.SinceInSeconds(start)
-	fmt.Println("Time elapsed (Cancel Job) :", elapsed)
+	klog.Info("Time elapsed (Cancel Job) :", elapsed)
 
-	fmt.Printf("Job cancellation for pod %s result: %d\n", podName, err)
-	fmt.Println("Check job set: after delete")
-	fmt.Println(kf.podNameToJobId)
+	klog.Infof("Job cancellation for pod %s result: %d", podName, err)
+	if klog.V(2).Enabled() {
+		klog.Info("Check job set: after delete")
+		klog.Info(kf.podNameToJobId)
+	}
 	return nil
 }
 
@@ -209,13 +207,13 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		fmt.Println("Error getting InClusterConfig")
+		klog.Error("Error getting InClusterConfig")
 		return nil, err
 	}
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		fmt.Println("Error getting ClientSet")
+		klog.Error("Error getting ClientSet")
 		return nil, err
 	}
 
@@ -228,6 +226,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: kf.updatePod,
+		DeleteFunc: kf.deletePod,
 	})
 
 	stopPodInformer := make(chan struct{})
@@ -238,7 +237,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 // EventHandlers
 func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
-	fmt.Println("updatePod event handler")
+	klog.Info("Update Pod event handler")
 	newPod := newObj.(*v1.Pod)
 
 	switch newPod.Status.Phase {
@@ -247,7 +246,7 @@ func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
 	case v1.PodRunning:
 		// if a pod is start running, we can add it state to the delta graph if it is scheduled by other scheduler
 	case v1.PodSucceeded:
-		fmt.Printf("Pod %s succeeded, kubeflux needs to free the resources\n", newPod.Name)
+		klog.Infof("Pod %s succeeded, kubeflux needs to free the resources", newPod.Name)
 
 		kf.mutex.Lock()
 		defer kf.mutex.Unlock()
@@ -255,11 +254,11 @@ func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
 		if _, ok := kf.podNameToJobId[newPod.Name]; ok {
 			kf.cancelFluxJobForPod(newPod.Name)
 		} else {
-			fmt.Printf("Succeeded pod %s/%s doesn't have flux jobid\n", newPod.Namespace, newPod.Name)
+			klog.Infof("Succeeded pod %s/%s doesn't have flux jobid", newPod.Namespace, newPod.Name)
 		}
 	case v1.PodFailed:
 		// a corner case need to be tested, the pod exit code is not 0, can be created with segmentation fault pi test
-		fmt.Printf("Pod %s failed, kubeflux needs to free the resources\n", newPod.Name)
+		klog.Warningf("Pod %s failed, kubeflux needs to free the resources", newPod.Name)
 
 		kf.mutex.Lock()
 		defer kf.mutex.Unlock()
@@ -267,18 +266,31 @@ func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
 		if _, ok := kf.podNameToJobId[newPod.Name]; ok {
 			kf.cancelFluxJobForPod(newPod.Name)
 		} else {
-			fmt.Printf("Failed pod %s/%s doesn't have flux jobid\n", newPod.Namespace, newPod.Name)
+			klog.Errorf("Failed pod %s/%s doesn't have flux jobid", newPod.Namespace, newPod.Name)
 		}
 	case v1.PodUnknown:
 		// don't know how to deal with it as it's unknown phase
 	default:
 		// shouldn't enter this branch
 	}
-
 }
 
-////// Utility functions
-func printOutput(reserved bool, allocated string, at int64, overhead float64, jobid uint64, fluxerr int) {
-	fmt.Println("\n\t----Match Allocate output---")
-	fmt.Printf("jobid: %d\nreserved: %t\nallocated: %s\nat: %d\noverhead: %f\nerror: %d\n", jobid, reserved, allocated, at, overhead, fluxerr)
+func (kf *KubeFlux) deletePod(podObj interface{}) {
+	klog.Info("Delete Pod event handler")
+
+	pod := podObj.(*v1.Pod)
+	klog.Info("Pod status: ", pod.Status.Phase)
+	switch pod.Status.Phase {
+	case v1.PodPending:
+	case v1.PodRunning:
+		kf.mutex.Lock()
+		defer kf.mutex.Unlock()
+
+		if _, ok := kf.podNameToJobId[pod.Name]; ok {
+			kf.cancelFluxJobForPod(pod.Name)
+		} else {
+			klog.Infof("Deleted pod %s/%s doesn't have flux jobid", pod.Namespace, pod.Name)
+		}
+	}
+
 }

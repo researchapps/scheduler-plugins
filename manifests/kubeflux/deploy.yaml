@@ -22,7 +22,7 @@ spec:
           command:
           - /go/src/kubeflux/bin/server
           name: kubeflux-sidecar
-        - image:  localhost:5000/scheduler-plugins/kube-scheduler:latest 
+        - image: localhost:5000/scheduler-plugins/kube-scheduler:latest
           imagePullPolicy: Always
           command:
           - /bin/kube-scheduler
