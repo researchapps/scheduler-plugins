@@ -23,6 +23,26 @@ data:
         preFilter:
           enabled:
           - name: KubeFlux
+          - name: Coscheduling
+            weight: 1
         filter:
           enabled:
           - name: KubeFlux
+        postFilter:
+          enabled:
+          - name: Coscheduling
+            weight: 1
+        permit:
+          enabled:
+          - name: Coscheduling
+        reserve:
+          enabled:
+          - name: Coscheduling
+        postBind:
+          enabled:
+          - name: Coscheduling
+      pluginConfig:
+      - name: Coscheduling
+        args:
+          permitWaitingTimeSeconds: 10
+          deniedPGExpirationTimeSeconds: 3

@@ -18,19 +18,20 @@ package kubeflux
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
+	"sigs.k8s.io/scheduler-plugins/pkg/coscheduling/core"
+	pgclientset "sigs.k8s.io/scheduler-plugins/pkg/generated/clientset/versioned"
+	schedinformer "sigs.k8s.io/scheduler-plugins/pkg/generated/informers/externalversions"
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
 )
@@ -39,6 +40,7 @@ type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
 	podNameToJobId map[string]uint64
+	pgMgr          core.Manager
 }
 
 var _ framework.PreFilterPlugin = &KubeFlux{}
@@ -78,7 +80,6 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 	klog.Info("Node Selected: ", nodename)
 
 	state.Write(framework.StateKey(pod.Name), &fluxStateData{nodeName: nodename})
-
 	return framework.NewStatus(framework.Success, "")
 }
 
@@ -205,39 +206,50 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 // initialize and return a new Flux Plugin
 func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	// creates the in-cluster config
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		klog.Error("Error getting InClusterConfig")
-		return nil, err
-	}
+	// config, err := rest.InClusterConfig()
+	// if err != nil {
+	// 	klog.Error("Error getting InClusterConfig")
+	// 	return nil, err
+	// }
 	// creates the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		klog.Error("Error getting ClientSet")
-		return nil, err
-	}
-
-	factory := informers.NewSharedInformerFactory(clientset, 0)
-	podInformer := factory.Core().V1().Pods().Informer()
-
-	klog.Infof("KubeFlux starts")
+	// clientset, err := kubernetes.NewForConfig(config)
+	// if err != nil {
+	// 	klog.Error("Error getting ClientSet")
+	// 	return nil, err
+	// }
 
 	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
+	klog.Info("Create plugin")
 
+	// factory := informers.NewSharedInformerFactory(clientset, 0)
+	podInformer := handle.SharedInformerFactory().Core().V1().Pods().Informer()
 	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: kf.updatePod,
 		DeleteFunc: kf.deletePod,
 	})
 
-	stopPodInformer := make(chan struct{})
-	go podInformer.Run(stopPodInformer)
+	client := pgclientset.NewForConfigOrDie(handle.KubeConfig())
+	schedSharedInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
+	pgInformer := schedSharedInformerFactory.Scheduling().V1alpha1().PodGroups().Informer()
+	schedSharedInformerFactory.Start(nil)
 
+	klog.Info("Started informer factories")
+
+	if !cache.WaitForCacheSync(nil, pgInformer.HasSynced) {
+		err := fmt.Errorf("WaitForCacheSync failed")
+		klog.ErrorS(err, "Cannot sync caches")
+		return nil, err
+	}
+	// stopPodInformer := make(chan struct{})
+	// go podInformer.Run(stopPodInformer)
+
+	klog.Info("kubeflux starts")
 	return kf, nil
 }
 
 // EventHandlers
 func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
-	klog.Info("Update Pod event handler")
+	// klog.Info("Update Pod event handler")
 	newPod := newObj.(*v1.Pod)
 
 	switch newPod.Status.Phase {
