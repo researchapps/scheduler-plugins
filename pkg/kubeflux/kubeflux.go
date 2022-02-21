@@ -19,12 +19,16 @@ package kubeflux
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -34,6 +38,7 @@ import (
 	schedinformer "sigs.k8s.io/scheduler-plugins/pkg/generated/informers/externalversions"
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
+	"sigs.k8s.io/scheduler-plugins/pkg/util"
 )
 
 type KubeFlux struct {
@@ -64,8 +69,64 @@ func (s *fluxStateData) Clone() framework.StateData {
 	return clone
 }
 
+// initialize and return a new Flux Plugin
+func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
+
+	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
+
+	fluxPodsInformer := handle.SharedInformerFactory().Core().V1().Pods().Informer()
+	fluxPodsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: kf.updatePod,
+		DeleteFunc: kf.deletePod,
+	})
+
+	client := pgclientset.NewForConfigOrDie(handle.KubeConfig())
+	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
+	podGroupInformer := podGroupInformerFactory.Scheduling().V1alpha1().PodGroups()
+	pginf := podGroupInformer.Informer()
+	podGroupInformerFactory.Start(nil)
+
+	fieldSelector, err := fields.ParseSelector(",status.phase!=" + string(v1.PodSucceeded) + ",status.phase!=" + string(v1.PodFailed))
+	if err != nil {
+		klog.ErrorS(err, "ParseSelector failed")
+		os.Exit(1)
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(handle.ClientSet(), 0, informers.WithTweakListOptions(func(opt *metav1.ListOptions) {
+		opt.LabelSelector = util.PodGroupLabel
+		opt.FieldSelector = fieldSelector.String()
+	}))
+	podInformer := informerFactory.Core().V1().Pods()
+
+	scheduleTimeDuration := time.Duration(30) * time.Second
+	deniedPGExpirationTime := time.Duration(30) * time.Second
+
+	pgMgr := core.NewPodGroupManager(client, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
+	kf.pgMgr = pgMgr
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	informerFactory.Start(stopCh)
+
+	pinf := podInformer.Informer()
+	if !cache.WaitForCacheSync(nil, pginf.HasSynced, pinf.HasSynced) {
+		err := fmt.Errorf("WaitForCacheSync failed")
+		klog.ErrorS(err, "Cannot sync caches")
+		return nil, err
+	}
+
+	klog.Info("kubeflux starts")
+	return kf, nil
+}
+
 func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
 	klog.Infof("Examining the pod")
+	a, b := kf.pgMgr.GetPodGroup(pod)
+	if err := kf.pgMgr.PreFilter(ctx, pod); err != nil {
+		klog.ErrorS(err, "PreFilter failed", "pod", klog.KObj(pod))
+		// state.Write(cs.getStateKey(), NewNoopStateData())
+		return framework.NewStatus(framework.Unschedulable, err.Error())
+	}
 
 	nodename, err := kf.askFlux(pod)
 	if err != nil {
@@ -201,50 +262,6 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 		klog.Info(kf.podNameToJobId)
 	}
 	return nil
-}
-
-// initialize and return a new Flux Plugin
-func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	// creates the in-cluster config
-	// config, err := rest.InClusterConfig()
-	// if err != nil {
-	// 	klog.Error("Error getting InClusterConfig")
-	// 	return nil, err
-	// }
-	// creates the clientset
-	// clientset, err := kubernetes.NewForConfig(config)
-	// if err != nil {
-	// 	klog.Error("Error getting ClientSet")
-	// 	return nil, err
-	// }
-
-	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
-	klog.Info("Create plugin")
-
-	// factory := informers.NewSharedInformerFactory(clientset, 0)
-	podInformer := handle.SharedInformerFactory().Core().V1().Pods().Informer()
-	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: kf.updatePod,
-		DeleteFunc: kf.deletePod,
-	})
-
-	client := pgclientset.NewForConfigOrDie(handle.KubeConfig())
-	schedSharedInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
-	pgInformer := schedSharedInformerFactory.Scheduling().V1alpha1().PodGroups().Informer()
-	schedSharedInformerFactory.Start(nil)
-
-	klog.Info("Started informer factories")
-
-	if !cache.WaitForCacheSync(nil, pgInformer.HasSynced) {
-		err := fmt.Errorf("WaitForCacheSync failed")
-		klog.ErrorS(err, "Cannot sync caches")
-		return nil, err
-	}
-	// stopPodInformer := make(chan struct{})
-	// go podInformer.Run(stopPodInformer)
-
-	klog.Info("kubeflux starts")
-	return kf, nil
 }
 
 // EventHandlers
