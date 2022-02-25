@@ -27,6 +27,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
@@ -45,7 +46,7 @@ type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
 	podNameToJobId map[string]uint64
-	pgMgr          core.Manager
+	pgMgr          *core.PodGroupManager
 }
 
 var _ framework.PreFilterPlugin = &KubeFlux{}
@@ -73,18 +74,24 @@ func (s *fluxStateData) Clone() framework.StateData {
 func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
+	klog.Info("Create plugin")
+	ctx := context.TODO()
 
 	fluxPodsInformer := handle.SharedInformerFactory().Core().V1().Pods().Informer()
 	fluxPodsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: kf.updatePod,
 		DeleteFunc: kf.deletePod,
 	})
+	go fluxPodsInformer.Run(ctx.Done())
+	klog.Info("Create generic pod informer")
 
 	client := pgclientset.NewForConfigOrDie(handle.KubeConfig())
 	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
 	podGroupInformer := podGroupInformerFactory.Scheduling().V1alpha1().PodGroups()
 	pginf := podGroupInformer.Informer()
-	podGroupInformerFactory.Start(nil)
+	// podGroupInformerFactory.Start(nil)
+
+	klog.Info("Create pod group")
 
 	fieldSelector, err := fields.ParseSelector(",status.phase!=" + string(v1.PodSucceeded) + ",status.phase!=" + string(v1.PodFailed))
 	if err != nil {
@@ -109,6 +116,9 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	informerFactory.Start(stopCh)
 
 	pinf := podInformer.Informer()
+	go pinf.Run(ctx.Done())
+	go pginf.Run(ctx.Done())
+
 	if !cache.WaitForCacheSync(nil, pginf.HasSynced, pinf.HasSynced) {
 		err := fmt.Errorf("WaitForCacheSync failed")
 		klog.ErrorS(err, "Cannot sync caches")
@@ -121,18 +131,23 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
 	klog.Infof("Examining the pod")
-	a, b := kf.pgMgr.GetPodGroup(pod)
-	if err := kf.pgMgr.PreFilter(ctx, pod); err != nil {
-		klog.ErrorS(err, "PreFilter failed", "pod", klog.KObj(pod))
-		// state.Write(cs.getStateKey(), NewNoopStateData())
-		return framework.NewStatus(framework.Unschedulable, err.Error())
+	var nodename string
+	var err error
+	if kf.isGroup(pod) {
+		count, err := kf.groupPreFilter(ctx, pod)
+		if err != nil {
+			klog.ErrorS(err, "Group not completed yet", "pod", klog.KObj(pod))
+			state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
+			return framework.NewStatus(framework.Unschedulable, err.Error())
+		}
+		nodename, err = kf.AskFlux(pod, count)
+		klog.Infof("Node Selected %s for Group size %d: ", nodename, count)
+	} else {
+		nodename, err = kf.AskFlux(pod, 1)
+		if err != nil {
+			return framework.NewStatus(framework.Unschedulable, err.Error())
+		}
 	}
-
-	nodename, err := kf.askFlux(pod)
-	if err != nil {
-		return framework.NewStatus(framework.Unschedulable, err.Error())
-	}
-
 	if nodename == "NONE" {
 		klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodename)
 		return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux, nodename "+nodename)
@@ -142,6 +157,42 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 
 	state.Write(framework.StateKey(pod.Name), &fluxStateData{nodeName: nodename})
 	return framework.NewStatus(framework.Success, "")
+
+	// return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux")
+}
+
+func (kf *KubeFlux) isGroup(pod *v1.Pod) bool {
+	_, pg := kf.pgMgr.GetPodGroup(pod)
+	if pg == nil {
+		klog.InfoS("Not in group", "pod", klog.KObj(pod))
+		return false
+	}
+	return true
+}
+func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error) {
+	klog.InfoS("Flux Pre-Filter", "pod", klog.KObj(pod))
+	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
+	if pg == nil {
+		klog.InfoS("Not in group", "pod", klog.KObj(pod))
+		return 0, nil
+	}
+	if _, ok := kf.pgMgr.LastDeniedPG.Get(pgFullName); ok {
+		return 0, fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
+	}
+	pods, err := kf.pgMgr.PodLister.Pods(pod.Namespace).List(
+		labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
+	)
+	klog.Info("Labels ", util.GetPodGroupLabel(pod))
+	if err != nil {
+		return 0, fmt.Errorf("podLister list pods failed: %v", err)
+	}
+	klog.Info("Pod", pod)
+	klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
+	if len(pods) < int(pg.Spec.MinMember) {
+		return 0, fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
+			"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
+	}
+	return len(pods), nil
 }
 
 func (kf *KubeFlux) Filter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
@@ -161,7 +212,7 @@ func (kf *KubeFlux) PreFilterExtensions() framework.PreFilterExtensions {
 	return nil
 }
 
-func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
+func (kf *KubeFlux) AskFlux(pod *v1.Pod, count int) (string, error) {
 	// clean up previous match if a pod has already allocated previously
 	kf.mutex.Lock()
 	_, isPodAllocated := kf.podNameToJobId[pod.Name]
@@ -189,7 +240,8 @@ func (kf *KubeFlux) askFlux(pod *v1.Pod) (string, error) {
 
 	request := &pb.MatchRequest{
 		Ps:      jobspec,
-		Request: "allocate"}
+		Request: "allocate",
+		Count:   int32(count)}
 
 	r, err2 := grpcclient.Match(context.Background(), request)
 	if err2 != nil {

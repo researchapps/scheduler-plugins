@@ -27,6 +27,7 @@ message PodSpec {
 message MatchRequest {
     PodSpec ps = 1;
     string request = 2;
+    int32 count = 3;
 }
 
 // The Match response message

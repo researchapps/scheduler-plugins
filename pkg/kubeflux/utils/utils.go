@@ -19,8 +19,19 @@ package utils
 import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/scheduler/framework"
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 )
+
+type noopStateData struct{}
+
+func NewNoopStateData() framework.StateData {
+	return &noopStateData{}
+}
+
+func (d *noopStateData) Clone() framework.StateData {
+	return d
+}
 
 // InspectPodInfo takes a pod object and returns the pod.spec
 func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
