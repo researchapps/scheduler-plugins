@@ -22,24 +22,24 @@ data:
           - name: '*'
         preFilter:
           enabled:
-          - name: Coscheduling
+          # - name: Coscheduling
           - name: KubeFlux
         filter:
           enabled:
           - name: KubeFlux
-      #   postFilter:
-      #     enabled:
-      #     - name: Coscheduling
-      #       weight: 1
-      #   permit:
-      #     enabled:
-      #     - name: Coscheduling
-      #   reserve:
-      #     enabled:
-      #     - name: Coscheduling
-      #   postBind:
-      #     enabled:
-      #     - name: Coscheduling
+        postFilter:
+          enabled:
+          - name: Coscheduling
+            weight: 1
+        permit:
+          enabled:
+          - name: Coscheduling
+        reserve:
+          enabled:
+          - name: Coscheduling
+        postBind:
+          enabled:
+          - name: Coscheduling
       pluginConfig:
       - name: Coscheduling
         args:

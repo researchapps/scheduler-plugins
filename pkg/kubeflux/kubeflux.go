@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/scheduler-plugins/pkg/coscheduling/core"
 	pgclientset "sigs.k8s.io/scheduler-plugins/pkg/generated/clientset/versioned"
 	schedinformer "sigs.k8s.io/scheduler-plugins/pkg/generated/informers/externalversions"
+	kfcore "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/core"
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
 	"sigs.k8s.io/scheduler-plugins/pkg/util"
@@ -59,23 +60,13 @@ func (kf *KubeFlux) Name() string {
 	return Name
 }
 
-type fluxStateData struct {
-	nodeName string
-}
-
-func (s *fluxStateData) Clone() framework.StateData {
-	clone := &fluxStateData{
-		nodeName: s.nodeName,
-	}
-	return clone
-}
-
 // initialize and return a new Flux Plugin
 func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 	kf := &KubeFlux{handle: handle, podNameToJobId: make(map[string]uint64)}
 	klog.Info("Create plugin")
 	ctx := context.TODO()
+	kfcore.Init()
 
 	fluxPodsInformer := handle.SharedInformerFactory().Core().V1().Pods().Informer()
 	fluxPodsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -89,7 +80,6 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
 	podGroupInformer := podGroupInformerFactory.Scheduling().V1alpha1().PodGroups()
 	pginf := podGroupInformer.Informer()
-	// podGroupInformerFactory.Start(nil)
 
 	klog.Info("Create pod group")
 
@@ -131,44 +121,53 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
 	klog.Infof("Examining the pod")
-	var nodename string
 	var err error
-	if kf.isGroup(pod) {
-		count, err := kf.groupPreFilter(ctx, pod)
+	var nodename string
+	if pgname, ok := kf.isGroup(pod); ok {
+		klog.Infof("GROUP (%s:%s)", pod.Name, pgname)
+		if !kfcore.HaveList(pgname) {
+			klog.Infof("Getting a pod group")
+			groupSize, err := kf.groupPreFilter(ctx, pod)
+			if err != nil {
+				klog.ErrorS(err, "Group not completed yet", "pod", klog.KObj(pod))
+				state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
+				return framework.NewStatus(framework.Unschedulable, err.Error())
+			}
+			_, err = kf.AskFlux(pod, groupSize)
+			klog.Infof("Group size %d: ", nodename, groupSize)
+		}
+		nodename, err = kfcore.GetNextNode(pgname)
+		klog.Infof("Node Selected %s (%s:%s)", nodename, pod.Name, pgname)
 		if err != nil {
-			klog.ErrorS(err, "Group not completed yet", "pod", klog.KObj(pod))
-			state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
 			return framework.NewStatus(framework.Unschedulable, err.Error())
 		}
-		nodename, err = kf.AskFlux(pod, count)
-		klog.Infof("Node Selected %s for Group size %d: ", nodename, count)
 	} else {
 		nodename, err = kf.AskFlux(pod, 1)
 		if err != nil {
 			return framework.NewStatus(framework.Unschedulable, err.Error())
 		}
-	}
-	if nodename == "NONE" {
-		klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodename)
-		return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux, nodename "+nodename)
+
 	}
 
 	klog.Info("Node Selected: ", nodename)
-
-	state.Write(framework.StateKey(pod.Name), &fluxStateData{nodeName: nodename})
+	state.Write(framework.StateKey(pod.Name), &kfcore.FluxStateData{NodeName: nodename})
 	return framework.NewStatus(framework.Success, "")
 
-	// return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux")
+	// if nodenames == nil {
+	// 	klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodenames)
+	// 	return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux")
+	// }
 }
 
-func (kf *KubeFlux) isGroup(pod *v1.Pod) bool {
-	_, pg := kf.pgMgr.GetPodGroup(pod)
+func (kf *KubeFlux) isGroup(pod *v1.Pod) (string, bool) {
+	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
 	if pg == nil {
 		klog.InfoS("Not in group", "pod", klog.KObj(pod))
-		return false
+		return "", false
 	}
-	return true
+	return pgFullName, true
 }
+
 func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error) {
 	klog.InfoS("Flux Pre-Filter", "pod", klog.KObj(pod))
 	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
@@ -186,7 +185,6 @@ func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error
 	if err != nil {
 		return 0, fmt.Errorf("podLister list pods failed: %v", err)
 	}
-	klog.Info("Pod", pod)
 	klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
 	if len(pods) < int(pg.Spec.MinMember) {
 		return 0, fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
@@ -198,10 +196,10 @@ func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error
 func (kf *KubeFlux) Filter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
 	klog.Info("Filtering input node ", nodeInfo.Node().Name)
 	if v, e := cycleState.Read(framework.StateKey(pod.Name)); e == nil {
-		if value, ok := v.(*fluxStateData); ok && value.nodeName != nodeInfo.Node().Name {
+		if value, ok := v.(*kfcore.FluxStateData); ok && value.NodeName != nodeInfo.Node().Name {
 			return framework.NewStatus(framework.Unschedulable, "pod is not permitted")
 		} else {
-			klog.Info("Filter: node selected by Flux ", value.nodeName)
+			klog.Info("Filter: node selected by Flux ", value.NodeName)
 		}
 	}
 
@@ -249,18 +247,32 @@ func (kf *KubeFlux) AskFlux(pod *v1.Pod, count int) (string, error) {
 		return "", err
 	}
 
-	klog.Infof("[FluxClient] response nodeID %s", r.GetNodeID())
 	klog.Infof("[FluxClient] response podID %s", r.GetPodID())
 
-	nodename := r.GetNodeID()
-	jobid := uint64(r.GetJobID())
+	if count > 1 {
+		pgFullName, _ := kf.pgMgr.GetPodGroup(pod)
+		nodelist := kfcore.CreateNodePodsList(r.GetNodelist(), pgFullName)
+		klog.Infof("[FluxClient] response nodeID %s", r.GetNodelist())
+		klog.Info("[FluxClient] Parsed Nodelist ", nodelist)
+		jobid := uint64(r.GetJobID())
 
-	kf.mutex.Lock()
-	kf.podNameToJobId[pod.Name] = jobid
-	klog.Info("Check job set: ", kf.podNameToJobId)
-	kf.mutex.Unlock()
+		kf.mutex.Lock()
+		kf.podNameToJobId[pod.Name] = jobid
+		klog.Info("Check job set: ", kf.podNameToJobId)
+		kf.mutex.Unlock()
+	} else {
+		nodename := r.GetNodelist()[0].GetNodeID()
+		jobid := uint64(r.GetJobID())
 
-	return nodename, nil
+		kf.mutex.Lock()
+		kf.podNameToJobId[pod.Name] = jobid
+		klog.Info("Check job set: ", kf.podNameToJobId)
+		kf.mutex.Unlock()
+
+		return nodename, nil
+	}
+
+	return "", nil
 }
 
 func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {

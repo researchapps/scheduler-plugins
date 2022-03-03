@@ -23,13 +23,13 @@ import (
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 )
 
-type noopStateData struct{}
+type NoopStateData struct{}
 
 func NewNoopStateData() framework.StateData {
-	return &noopStateData{}
+	return &NoopStateData{}
 }
 
-func (d *noopStateData) Clone() framework.StateData {
+func (d *NoopStateData) Clone() framework.StateData {
 	return d
 }
 
@@ -61,7 +61,7 @@ func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
 	if specRequests.Cpu().Value() == 0 {
 		ps.Cpu = 1
 	} else {
-		ps.Cpu = specRequests.Cpu().Value()
+		ps.Cpu = int32(specRequests.Cpu().Value())
 	}
 	if specRequests.Memory().Value() > 0 {
 		ps.Memory = specRequests.Memory().Value()
