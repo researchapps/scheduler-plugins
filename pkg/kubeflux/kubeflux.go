@@ -27,7 +27,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
@@ -134,12 +133,12 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 		// klog.Infof("GROUP (%s:%s)", pod.Name, pgname)
 		if !kfcore.HaveList(pgname) {
 			klog.Infof("Getting a pod group")
-			groupSize, err := kf.groupPreFilter(ctx, pod)
-			if err != nil {
-				klog.ErrorS(err, "Group not completed yet", "pod", klog.KObj(pod))
-				state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
-				return framework.NewStatus(framework.Unschedulable, err.Error())
-			}
+			groupSize, _ := kf.groupPreFilter(ctx, pod)
+			// if err != nil {
+			// 	klog.ErrorS(err, "Group not completed yet", "pod", klog.KObj(pod))
+			// 	state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
+			// 	return framework.NewStatus(framework.Unschedulable, err.Error())
+			// }
 			_, err = kf.AskFlux(pod, groupSize)
 			// klog.Infof("Group size %d: ", nodename, groupSize)
 		}
@@ -187,19 +186,20 @@ func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error
 	if _, ok := kf.pgMgr.LastDeniedPG.Get(pgFullName); ok {
 		return 0, fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
 	}
-	pods, err := kf.pgMgr.PodLister.Pods(pod.Namespace).List(
-		labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
-	)
+	// pods, err := kf.pgMgr.PodLister.Pods(pod.Namespace).List(
+	// 	labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
+	// )
 
-	if err != nil {
-		return 0, fmt.Errorf("podLister list pods failed: %v", err)
-	}
+	// if err != nil {
+	// 	return 0, fmt.Errorf("podLister list pods failed: %v", err)
+	// }
 	// klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
-	if len(pods) < int(pg.Spec.MinMember) {
-		return 0, fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
-			"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
-	}
-	return len(pods), nil
+	// if len(pods) < int(pg.Spec.MinMember) {
+	// 	return 0, fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
+	// 		"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
+	// }
+	klog.Info("pod group members ", pg.Spec.MinMember)
+	return int(pg.Spec.MinMember) /*len(pods)*/, nil
 }
 
 func (kf *KubeFlux) Filter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
