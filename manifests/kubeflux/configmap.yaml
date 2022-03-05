@@ -5,7 +5,7 @@ metadata:
   namespace: kube-system
 data:
   scheduler-config.yaml: |
-    apiVersion: kubescheduler.config.k8s.io/v1beta1
+    apiVersion: kubescheduler.config.k8s.io/v1beta2
     kind: KubeSchedulerConfiguration
     leaderElection:
       leaderElect: false
@@ -22,7 +22,6 @@ data:
           - name: '*'
         preFilter:
           enabled:
-          # - name: Coscheduling
           - name: KubeFlux
         filter:
           enabled:
@@ -30,7 +29,6 @@ data:
         postFilter:
           enabled:
           - name: Coscheduling
-            weight: 1
         permit:
           enabled:
           - name: Coscheduling

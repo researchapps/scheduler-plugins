@@ -79,7 +79,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	client := pgclientset.NewForConfigOrDie(handle.KubeConfig())
 	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
 	podGroupInformer := podGroupInformerFactory.Scheduling().V1alpha1().PodGroups()
-	pginf := podGroupInformer.Informer()
+	// pginf := podGroupInformer.Informer()
 
 	klog.Info("Create pod group")
 
@@ -88,28 +88,35 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 		klog.ErrorS(err, "ParseSelector failed")
 		os.Exit(1)
 	}
-
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(handle.ClientSet(), 0, informers.WithTweakListOptions(func(opt *metav1.ListOptions) {
 		opt.LabelSelector = util.PodGroupLabel
 		opt.FieldSelector = fieldSelector.String()
 	}))
 	podInformer := informerFactory.Core().V1().Pods()
 
-	scheduleTimeDuration := time.Duration(30) * time.Second
-	deniedPGExpirationTime := time.Duration(30) * time.Second
+	scheduleTimeDuration := time.Duration(10) * time.Second
+	deniedPGExpirationTime := time.Duration(1) * time.Second
 
 	pgMgr := core.NewPodGroupManager(client, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
 	kf.pgMgr = pgMgr
 
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-	informerFactory.Start(stopCh)
+	// stopCh := make(chan struct{})
+	// defer close(stopCh)
+	// informerFactory.Start(stopCh)
+	podGroupInformerFactory.Start(ctx.Done())
+	informerFactory.Start(ctx.Done())
 
-	pinf := podInformer.Informer()
-	go pinf.Run(ctx.Done())
-	go pginf.Run(ctx.Done())
+	// pinf := podInformer.Informer()
+	// go pinf.Run(ctx.Done())
+	// go pginf.Run(ctx.Done())
 
-	if !cache.WaitForCacheSync(nil, pginf.HasSynced, pinf.HasSynced) {
+	// if !cache.WaitForCacheSync(nil, pginf.HasSynced, pinf.HasSynced) {
+	// 	err := fmt.Errorf("WaitForCacheSync failed")
+	// 	klog.ErrorS(err, "Cannot sync caches")
+	// 	return nil, err
+	// }
+
+	if !cache.WaitForCacheSync(ctx.Done(), podGroupInformer.Informer().HasSynced, podInformer.Informer().HasSynced) {
 		err := fmt.Errorf("WaitForCacheSync failed")
 		klog.ErrorS(err, "Cannot sync caches")
 		return nil, err
@@ -124,7 +131,7 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 	var err error
 	var nodename string
 	if pgname, ok := kf.isGroup(pod); ok {
-		klog.Infof("GROUP (%s:%s)", pod.Name, pgname)
+		// klog.Infof("GROUP (%s:%s)", pod.Name, pgname)
 		if !kfcore.HaveList(pgname) {
 			klog.Infof("Getting a pod group")
 			groupSize, err := kf.groupPreFilter(ctx, pod)
@@ -134,7 +141,7 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 				return framework.NewStatus(framework.Unschedulable, err.Error())
 			}
 			_, err = kf.AskFlux(pod, groupSize)
-			klog.Infof("Group size %d: ", nodename, groupSize)
+			// klog.Infof("Group size %d: ", nodename, groupSize)
 		}
 		nodename, err = kfcore.GetNextNode(pgname)
 		klog.Infof("Node Selected %s (%s:%s)", nodename, pod.Name, pgname)
@@ -161,6 +168,7 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 
 func (kf *KubeFlux) isGroup(pod *v1.Pod) (string, bool) {
 	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
+
 	if pg == nil {
 		klog.InfoS("Not in group", "pod", klog.KObj(pod))
 		return "", false
@@ -169,7 +177,8 @@ func (kf *KubeFlux) isGroup(pod *v1.Pod) (string, bool) {
 }
 
 func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error) {
-	klog.InfoS("Flux Pre-Filter", "pod", klog.KObj(pod))
+	// klog.InfoS("Flux Pre-Filter", "pod", klog.KObj(pod))
+	klog.InfoS("Flux Pre-Filter", "pod labels", pod.Labels)
 	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
 	if pg == nil {
 		klog.InfoS("Not in group", "pod", klog.KObj(pod))
@@ -181,11 +190,11 @@ func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error
 	pods, err := kf.pgMgr.PodLister.Pods(pod.Namespace).List(
 		labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
 	)
-	klog.Info("Labels ", util.GetPodGroupLabel(pod))
+
 	if err != nil {
 		return 0, fmt.Errorf("podLister list pods failed: %v", err)
 	}
-	klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
+	// klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
 	if len(pods) < int(pg.Spec.MinMember) {
 		return 0, fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
 			"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
