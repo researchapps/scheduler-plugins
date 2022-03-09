@@ -110,6 +110,7 @@ func NewPodGroupManager(pgClient pgclientset.Interface, snapshotSharedLister fra
 // 2. the total number of pods in the podgroup is less than the minimum number of pods
 // that is required to be scheduled.
 func (pgMgr *PodGroupManager) PreFilter(ctx context.Context, pod *corev1.Pod) error {
+	klog.V(5).InfoS("Pre-filter", "pod", klog.KObj(pod))
 	pgFullName, pg := pgMgr.GetPodGroup(pod)
 	if pg == nil {
 		return nil
@@ -125,6 +126,7 @@ func (pgMgr *PodGroupManager) PreFilter(ctx context.Context, pod *corev1.Pod) er
 	}
 	klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
 	klog.Info("Labels ", util.GetPodGroupLabel(pod))
+	klog.Info("Pod", pod)
 	if len(pods) < int(pg.Spec.MinMember) {
 		return fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
 			"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
