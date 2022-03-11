@@ -70,8 +70,7 @@ func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
 	ps.Gpu = gpu.Value()
 	ps.Storage = specRequests.StorageEphemeral().Value()
 
-	klog.Infof("[Jobspec] Pod spec: CPU %v/%v-milli, memory %v, GPU %v, storage %v", ps.Cpu, specRequests.Cpu().MilliValue(),
-		ps.Memory.Value(), ps.Gpu, ps.Storage)
+	klog.Infof("[Jobspec] Pod spec: CPU %v/%v-milli, memory %v, GPU %v, storage %v", ps.Cpu, specRequests.Cpu().MilliValue(), specRequests.Memory().Value(), ps.Gpu, ps.Storage)
 
 	return ps
 }
