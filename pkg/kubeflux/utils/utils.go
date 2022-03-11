@@ -63,15 +63,15 @@ func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
 	} else {
 		ps.Cpu = int32(specRequests.Cpu().Value())
 	}
-	if specRequests.Memory().Value() > 0 {
-		ps.Memory = specRequests.Memory().Value()
-	}
+	// if specRequests.Memory().Value() > 0 {
+	// 	ps.Memory = specRequests.Memory().Value()
+	// }
 	gpu := specLimits["nvidia.com/gpu"]
 	ps.Gpu = gpu.Value()
 	ps.Storage = specRequests.StorageEphemeral().Value()
 
-	klog.Infof("[Jobspec] Pod spec: CPU %v/%v-milli, memory %v/%v-milli, GPU %v, storage %v", ps.Cpu, specRequests.Cpu().MilliValue(),
-		ps.Memory, specRequests.Memory().MilliValue(), ps.Gpu, ps.Storage)
+	klog.Infof("[Jobspec] Pod spec: CPU %v/%v-milli, memory %v, GPU %v, storage %v", ps.Cpu, specRequests.Cpu().MilliValue(),
+		ps.Memory.Value(), ps.Gpu, ps.Storage)
 
 	return ps
 }
