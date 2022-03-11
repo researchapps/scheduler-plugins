@@ -139,7 +139,9 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 			// 	state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
 			// 	return framework.NewStatus(framework.Unschedulable, err.Error())
 			// }
-			_, err = kf.AskFlux(pod, groupSize)
+			if _, err = kf.AskFlux(pod, groupSize); err != nil {
+				return framework.NewStatus(framework.Unschedulable, err.Error())
+			}
 			// klog.Infof("Group size %d: ", nodename, groupSize)
 		}
 		nodename, err = kfcore.GetNextNode(pgname)
@@ -152,7 +154,6 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 		if err != nil {
 			return framework.NewStatus(framework.Unschedulable, err.Error())
 		}
-
 	}
 
 	klog.Info("Node Selected: ", nodename)
@@ -394,5 +395,4 @@ func (kf *KubeFlux) deletePod(podObj interface{}) {
 			klog.Infof("Deleted pod %s/%s doesn't have flux jobid", pod.Namespace, pod.Name)
 		}
 	}
-
 }
