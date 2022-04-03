@@ -17,6 +17,8 @@ limitations under the License.
 package utils
 
 import (
+	"strings"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -38,23 +40,20 @@ func InspectPodInfo(pod *v1.Pod) *pb.PodSpec {
 	ps := new(pb.PodSpec)
 	ps.Id = pod.Name
 	cont := pod.Spec.Containers[0]
-	/**
-	This will need to be done here AND at client level
-	if len(pr.Labels) > 0 {
-			r := make([]Resource, 0)
-			for key, val := range pr.Labels {
-				if strings.Contains(key, "nfd") {
-					count, _ := strconv.Atoi(val)
 
-					r = append(r, Resource{Type: strings.Split(key,".")[1], Count: int64(count)})
-				}
-			}
-			if len(r) > 0 {
-				socket_resources[0].With = r
+	//This will need to be done here AND at client level
+	if len(pod.Labels) > 0 {
+		r := make([]string, 0)
+		for key, val := range pod.Labels {
+			if strings.Contains(key, "jobspec") {
+				r = append(r, val)
 			}
 		}
+		if len(r) > 0 {
+			ps.Labels = r
+		}
+	}
 
-	**/
 	specRequests := cont.Resources.Requests
 	specLimits := cont.Resources.Limits
 

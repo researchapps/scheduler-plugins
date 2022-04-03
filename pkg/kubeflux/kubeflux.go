@@ -93,8 +93,8 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	}))
 	podInformer := informerFactory.Core().V1().Pods()
 
-	scheduleTimeDuration := time.Duration(10) * time.Second
-	deniedPGExpirationTime := time.Duration(1) * time.Second
+	scheduleTimeDuration := time.Duration(500) * time.Second
+	deniedPGExpirationTime := time.Duration(500) * time.Second
 
 	pgMgr := core.NewPodGroupManager(client, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
 	kf.pgMgr = pgMgr
@@ -259,7 +259,8 @@ func (kf *KubeFlux) AskFlux(pod *v1.Pod, count int) (string, error) {
 
 	klog.Infof("[FluxClient] response podID %s", r.GetPodID())
 
-	if count > 1 {
+	_, ok := kf.isGroup(pod)
+	if count > 1 || ok {
 		pgFullName, _ := kf.pgMgr.GetPodGroup(pod)
 		nodelist := kfcore.CreateNodePodsList(r.GetNodelist(), pgFullName)
 		klog.Infof("[FluxClient] response nodeID %s", r.GetNodelist())
