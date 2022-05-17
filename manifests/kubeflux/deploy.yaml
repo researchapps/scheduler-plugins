@@ -17,13 +17,13 @@ spec:
     spec:
       serviceAccountName: kubeflux
       containers:
-        - image: quay.io/cmisale1/kubeflux-sidecar:dev
+        - image: quay.io/cmisale1/kubeflux-sidecar:latest
           imagePullPolicy: Always
           command:
           - /go/src/kubeflux/bin/server
           - --policy=lonode
           name: kubeflux-sidecar
-        - image: quay.io/cmisale1/kubeflux:dev
+        - image: quay.io/cmisale1/kubeflux:latest
           imagePullPolicy: Always
           command:
           - /bin/kube-scheduler
