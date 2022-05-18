@@ -39,7 +39,6 @@ import (
 	kfcore "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/core"
 	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
 	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux/utils"
-	"sigs.k8s.io/scheduler-plugins/pkg/util"
 )
 
 type KubeFlux struct {
@@ -75,10 +74,17 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	go fluxPodsInformer.Run(ctx.Done())
 	klog.Info("Create generic pod informer")
 
-	client := pgclientset.NewForConfigOrDie(handle.KubeConfig())
-	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(client, 0)
+	pgclient := pgclientset.NewForConfigOrDie(handle.KubeConfig())
+	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(pgclient, 0)
 	podGroupInformer := podGroupInformerFactory.Scheduling().V1alpha1().PodGroups()
 	// pginf := podGroupInformer.Informer()
+
+	/*
+	pgClient := pgclientset.NewForConfigOrDie(handle.KubeConfig())
+	pgInformerFactory := pgformers.NewSharedInformerFactory(pgClient, 0)
+	pgInformer := pgInformerFactory.Scheduling().V1alpha1().PodGroups()
+	podInformer := handle.SharedInformerFactory().Core().V1().Pods()
+	*/
 
 	klog.Info("Create pod group")
 
@@ -88,7 +94,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 		os.Exit(1)
 	}
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(handle.ClientSet(), 0, informers.WithTweakListOptions(func(opt *metav1.ListOptions) {
-		opt.LabelSelector = util.PodGroupLabel
+		// opt.LabelSelector = util.PodGroupLabel
 		opt.FieldSelector = fieldSelector.String()
 	}))
 	podInformer := informerFactory.Core().V1().Pods()
@@ -96,8 +102,9 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	scheduleTimeDuration := time.Duration(500) * time.Second
 	deniedPGExpirationTime := time.Duration(500) * time.Second
 
-	pgMgr := core.NewPodGroupManager(client, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
+	pgMgr := core.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
 	kf.pgMgr = pgMgr
+
 
 	// stopCh := make(chan struct{})
 	// defer close(stopCh)
@@ -105,15 +112,6 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	podGroupInformerFactory.Start(ctx.Done())
 	informerFactory.Start(ctx.Done())
 
-	// pinf := podInformer.Informer()
-	// go pinf.Run(ctx.Done())
-	// go pginf.Run(ctx.Done())
-
-	// if !cache.WaitForCacheSync(nil, pginf.HasSynced, pinf.HasSynced) {
-	// 	err := fmt.Errorf("WaitForCacheSync failed")
-	// 	klog.ErrorS(err, "Cannot sync caches")
-	// 	return nil, err
-	// }
 
 	if !cache.WaitForCacheSync(ctx.Done(), podGroupInformer.Informer().HasSynced, podInformer.Informer().HasSynced) {
 		err := fmt.Errorf("WaitForCacheSync failed")
@@ -179,14 +177,14 @@ func (kf *KubeFlux) isGroup(pod *v1.Pod) (string, bool) {
 func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error) {
 	// klog.InfoS("Flux Pre-Filter", "pod", klog.KObj(pod))
 	klog.InfoS("Flux Pre-Filter", "pod labels", pod.Labels)
-	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
+	_, pg := kf.pgMgr.GetPodGroup(pod)
 	if pg == nil {
 		klog.InfoS("Not in group", "pod", klog.KObj(pod))
 		return 0, nil
 	}
-	if _, ok := kf.pgMgr.LastDeniedPG.Get(pgFullName); ok {
-		return 0, fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
-	}
+	// if _, ok := kf.pgMgr.LastDeniedPG.Get(pgFullName); ok {
+	// 	return 0, fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
+	// }
 	// pods, err := kf.pgMgr.PodLister.Pods(pod.Namespace).List(
 	// 	labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
 	// )

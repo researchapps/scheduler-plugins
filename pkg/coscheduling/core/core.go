@@ -76,7 +76,7 @@ type PodGroupManager struct {
 	scheduleTimeout *time.Duration
 	// lastDeniedPG stores the pg name if a pod can not pass pre-filer,
 	// or anyone of the pod timeout
-	LastDeniedPG *gochache.Cache
+	lastDeniedPG *gochache.Cache
 	// permittedPG stores the pg name which has passed the pre resource check.
 	permittedPG *gochache.Cache
 	// deniedCacheExpirationTime is the expiration time that a podGroup remains in lastDeniedPG store.
@@ -84,7 +84,7 @@ type PodGroupManager struct {
 	// pgLister is podgroup lister
 	pgLister pglister.PodGroupLister
 	// podLister is pod lister
-	PodLister listerv1.PodLister
+	podLister listerv1.PodLister
 	// reserveResourcePercentage is the reserved resource for the max finished group, range (0,100]
 	reserveResourcePercentage int32
 	sync.RWMutex
@@ -99,8 +99,8 @@ func NewPodGroupManager(pgClient pgclientset.Interface, snapshotSharedLister fra
 		scheduleTimeout:            scheduleTimeout,
 		lastDeniedPGExpirationTime: deniedPGExpirationTime,
 		pgLister:                   pgInformer.Lister(),
-		PodLister:                  podInformer.Lister(),
-		LastDeniedPG:               gochache.New(3*time.Second, 3*time.Second),
+		podLister:                  podInformer.Lister(),
+		lastDeniedPG:               gochache.New(3*time.Second, 3*time.Second),
 		permittedPG:                gochache.New(3*time.Second, 3*time.Second),
 	}
 	return pgMgr
@@ -152,7 +152,7 @@ func (pgMgr *PodGroupManager) PreFilter(ctx context.Context, pod *corev1.Pod) er
 	if pg == nil {
 		return nil
 	}
-	if _, ok := pgMgr.LastDeniedPG.Get(pgFullName); ok {
+	if _, ok := pgMgr.lastDeniedPG.Get(pgFullName); ok {
 		return fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
 	}
 	pods, err := pgMgr.podLister.Pods(pod.Namespace).List(
@@ -161,9 +161,6 @@ func (pgMgr *PodGroupManager) PreFilter(ctx context.Context, pod *corev1.Pod) er
 	if err != nil {
 		return fmt.Errorf("podLister list pods failed: %v", err)
 	}
-	klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
-	klog.Info("Labels ", util.GetPodGroupLabel(pod))
-	klog.Info("Pod", pod)
 	if len(pods) < int(pg.Spec.MinMember) {
 		return fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
 			"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
@@ -273,7 +270,7 @@ func (pgMgr *PodGroupManager) GetCreationTimestamp(pod *corev1.Pod, ts time.Time
 
 // AddDeniedPodGroup adds a podGroup that fails to be scheduled to a PodGroup cache with expriration.
 func (pgMgr *PodGroupManager) AddDeniedPodGroup(pgFullName string) {
-	pgMgr.LastDeniedPG.Add(pgFullName, "", *pgMgr.lastDeniedPGExpirationTime)
+	pgMgr.lastDeniedPG.Add(pgFullName, "", *pgMgr.lastDeniedPGExpirationTime)
 }
 
 // DeletePermittedPodGroup deletes a podGroup that pass Pre-Filter but reach PostFilter.
