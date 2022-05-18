@@ -25,6 +25,10 @@ require (
 	k8s.io/utils v0.0.0-20211116205334-6203023598ed
 	sigs.k8s.io/controller-runtime v0.11.1
 	sigs.k8s.io/yaml v1.3.0
+	k8s.io/klog/hack/tools v0.0.0-20210917071902-331d2323a192
+	k8s.io/klog/v2 v2.9.0
+	google.golang.org/grpc v1.38.0
+	google.golang.org/protobuf v1.26.0
 )
 
 require (
