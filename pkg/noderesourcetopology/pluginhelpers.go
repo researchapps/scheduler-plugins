@@ -18,9 +18,15 @@ package noderesourcetopology
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
-	"k8s.io/api/core/v1"
+	"github.com/dustin/go-humanize"
+
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -31,25 +37,17 @@ import (
 	listerv1alpha1 "github.com/k8stopologyawareschedwg/noderesourcetopology-api/pkg/generated/listers/topology/v1alpha1"
 )
 
-func findNodeTopology(nodeName string, nodeResTopoPlugin *nodeResTopologyPlugin) *topologyv1alpha1.NodeResourceTopology {
-	klog.V(5).InfoS("Namespaces for nodeResTopoPlugin", "namespaces", nodeResTopoPlugin.namespaces)
-	for _, namespace := range nodeResTopoPlugin.namespaces {
-		klog.V(5).InfoS("Lister for nodeResTopoPlugin", "lister", nodeResTopoPlugin.lister)
-		// NodeTopology couldn't be placed in several namespaces simultaneously
-		lister := nodeResTopoPlugin.lister
-		nodeTopology, err := (*lister).NodeResourceTopologies(namespace).Get(nodeName)
-		if err != nil {
-			klog.V(5).ErrorS(err, "Cannot get NodeTopologies from NodeResourceTopologyNamespaceLister")
-			continue
-		}
-		if nodeTopology != nil {
-			return nodeTopology
-		}
+func findNodeTopology(nodeName string, lister listerv1alpha1.NodeResourceTopologyLister) *topologyv1alpha1.NodeResourceTopology {
+	klog.V(5).InfoS("Lister for nodeResTopoPlugin", "lister", lister)
+	nodeTopology, err := lister.Get(nodeName)
+	if err != nil {
+		klog.V(5).ErrorS(err, "Cannot get NodeTopologies from NodeResourceTopologyLister")
+		return nil
 	}
-	return nil
+	return nodeTopology
 }
 
-func initNodeTopologyInformer(kubeConfig *restclient.Config) (*listerv1alpha1.NodeResourceTopologyLister, error) {
+func initNodeTopologyInformer(kubeConfig *restclient.Config) (listerv1alpha1.NodeResourceTopologyLister, error) {
 	topoClient, err := topoclientset.NewForConfig(kubeConfig)
 	if err != nil {
 		klog.ErrorS(err, "Cannot create clientset for NodeTopologyResource", "kubeConfig", kubeConfig)
@@ -65,7 +63,7 @@ func initNodeTopologyInformer(kubeConfig *restclient.Config) (*listerv1alpha1.No
 	topologyInformerFactory.Start(ctx.Done())
 	topologyInformerFactory.WaitForCacheSync(ctx.Done())
 
-	return &nodeResourceTopologyLister, nil
+	return nodeResourceTopologyLister, nil
 }
 
 func createNUMANodeList(zones topologyv1alpha1.ZoneList) NUMANodeList {
@@ -83,6 +81,7 @@ func createNUMANodeList(zones topologyv1alpha1.ZoneList) NUMANodeList {
 				continue
 			}
 			resources := extractResources(zone)
+			klog.V(6).InfoS("extracted NUMA resources", resourceListToLoggable(zone.Name, resources)...)
 			nodes = append(nodes, NUMANode{NUMAID: numaID, Resources: resources})
 		}
 	}
@@ -147,10 +146,45 @@ func makePodByResourceListWithManyContainers(resources *v1.ResourceList, contain
 func extractResources(zone topologyv1alpha1.Zone) v1.ResourceList {
 	res := make(v1.ResourceList)
 	for _, resInfo := range zone.Resources {
-		klog.V(5).InfoS("Extract resources for zone", "resName", resInfo.Name, "resAvailable", resInfo.Available)
 		res[v1.ResourceName(resInfo.Name)] = resInfo.Available
 	}
 	return res
+}
+
+func logNumaNodes(desc, nodeName string, nodes NUMANodeList) {
+	for _, numaNode := range nodes {
+		numaLogKey := fmt.Sprintf("%s/node-%d", nodeName, numaNode.NUMAID)
+		klog.V(6).InfoS(desc, resourceListToLoggable(numaLogKey, numaNode.Resources)...)
+	}
+}
+
+func resourceListToLoggable(logKey string, resources v1.ResourceList) []interface{} {
+	items := []interface{}{"logKey", logKey}
+
+	resNames := []string{}
+	for resName := range resources {
+		resNames = append(resNames, string(resName))
+	}
+	sort.Strings(resNames)
+
+	for _, resName := range resNames {
+		qty := resources[v1.ResourceName(resName)]
+		items = append(items, resName)
+		resVal, _ := qty.AsInt64()
+		if needsHumanization(resName) {
+			items = append(items, humanize.IBytes(uint64(resVal)))
+		} else {
+			items = append(items, strconv.FormatInt(resVal, 10))
+		}
+	}
+	return items
+}
+
+func needsHumanization(resName string) bool {
+	// memory-related resources may be expressed in KiB/Bytes, which makes
+	// for long numbers, harder to read and compare. To make it easier for
+	// the reader, we express them in a more compact form using go-humanize.
+	return resName == string(v1.ResourceMemory) || strings.HasPrefix(resName, v1.ResourceHugePagesPrefix)
 }
 
 func newPolicyHandlerMap() PolicyHandlerMap {
@@ -158,4 +192,18 @@ func newPolicyHandlerMap() PolicyHandlerMap {
 		topologyv1alpha1.SingleNUMANodePodLevel:       newPodScopedHandler(),
 		topologyv1alpha1.SingleNUMANodeContainerLevel: newContainerScopedHandler(),
 	}
+}
+
+func logNRT(desc string, nrtObj *topologyv1alpha1.NodeResourceTopology) {
+	if !klog.V(6).Enabled() {
+		// avoid the expensive marshal operation
+		return
+	}
+
+	ntrJson, err := json.MarshalIndent(nrtObj, "", " ")
+	if err != nil {
+		klog.V(6).ErrorS(err, "failed to marshal noderesourcetopology object")
+		return
+	}
+	klog.V(6).Info(desc, "noderesourcetopology", string(ntrJson))
 }

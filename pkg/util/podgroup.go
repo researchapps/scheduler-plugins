@@ -24,7 +24,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 
-	"sigs.k8s.io/scheduler-plugins/pkg/apis/scheduling/v1alpha1"
+	"sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 )
 
 // DefaultWaitTime is 60s if ScheduleTimeoutSeconds is not specified.
@@ -49,7 +49,7 @@ func CreateMergePatch(original, new interface{}) ([]byte, error) {
 
 // GetPodGroupLabel get pod group from pod annotations
 func GetPodGroupLabel(pod *v1.Pod) string {
-	return pod.Labels[PodGroupLabel]
+	return pod.Labels[v1alpha1.PodGroupLabel]
 }
 
 // GetPodGroupFullName get namespaced group name from pod annotations

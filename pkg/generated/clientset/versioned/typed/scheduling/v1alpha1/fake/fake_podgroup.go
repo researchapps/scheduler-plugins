@@ -27,7 +27,7 @@ import (
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	testing "k8s.io/client-go/testing"
-	v1alpha1 "sigs.k8s.io/scheduler-plugins/pkg/apis/scheduling/v1alpha1"
+	v1alpha1 "sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 )
 
 // FakePodGroups implements PodGroupInterface
@@ -117,7 +117,7 @@ func (c *FakePodGroups) UpdateStatus(ctx context.Context, podGroup *v1alpha1.Pod
 // Delete takes name of the podGroup and deletes it. Returns an error if one occurs.
 func (c *FakePodGroups) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	_, err := c.Fake.
-		Invokes(testing.NewDeleteAction(podgroupsResource, c.ns, name), &v1alpha1.PodGroup{})
+		Invokes(testing.NewDeleteActionWithOptions(podgroupsResource, c.ns, name, opts), &v1alpha1.PodGroup{})
 
 	return err
 }

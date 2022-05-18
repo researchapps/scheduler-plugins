@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 
-	pluginConfig "sigs.k8s.io/scheduler-plugins/pkg/apis/config"
+	pluginConfig "sigs.k8s.io/scheduler-plugins/apis/config"
 )
 
 const (
@@ -67,9 +67,10 @@ func newCollector(obj runtime.Object) (*Collector, error) {
 		client, _ = loadwatcherapi.NewServiceClient(args.WatcherAddress)
 	} else {
 		opts := watcher.MetricsProviderOpts{
-			Name:      string(args.MetricProvider.Type),
-			Address:   args.MetricProvider.Address,
-			AuthToken: args.MetricProvider.Token,
+			Name:               string(args.MetricProvider.Type),
+			Address:            args.MetricProvider.Address,
+			AuthToken:          args.MetricProvider.Token,
+			InsecureSkipVerify: args.MetricProvider.InsecureSkipVerify,
 		}
 		client, _ = loadwatcherapi.NewLibraryClient(opts)
 	}

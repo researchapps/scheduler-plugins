@@ -2,6 +2,10 @@
 
 Repository for out-of-tree scheduler plugins based on the [scheduler framework](https://kubernetes.io/docs/concepts/scheduling-eviction/scheduling-framework/).
 
+This repo provides scheduler plugins that are exercised in large companies.
+These plugins can be vendored as Golang SDK libraries or used out-of-box via the pre-built images or Helm charts.
+Additionally, this repo incorporates best practices and utilities to compose a high-quality scheduler plugin.
+
 ## Install
 
 Container images are available in the official scheduler-plugins k8s container registry. There are two images one
@@ -24,6 +28,7 @@ The kube-scheduler binary includes the below list of plugins. They can be config
 * [Coscheduling](pkg/coscheduling/README.md)
 * [Node Resources](pkg/noderesources/README.md)
 * [Node Resource Topology](pkg/noderesourcetopology/README.md)
+* [Preemption Toleration](pkg/preemptiontoleration/README.md)
 * [Trimaran](pkg/trimaran/README.md)
 
 Additionally the kube-scheduler binary includes the below list of sample plugins. These plugins are not intended for use in production
@@ -49,20 +54,22 @@ on demand, (e.g., `v0.18.800`) are used to indicated that the k8s client package
 changed since the previous release, and that only scheduler plugins code (features or bug fixes) was
 changed.
 
-Scheduler Plugins  | Compiled With k8s Version | Container Image                                      | Arch           |
--------------------|---------------------------|------------------------------------------------------|----------------|
-v0.21.6            | v1.21.6                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.21.6  | AMD64<br>ARM64 |
-v0.20.10           | v1.20.10                  | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.20.10 | AMD64<br>ARM64 |
-v0.19.9            | v1.19.9                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.19.9  | AMD64<br>ARM64 |
-v0.19.8            | v1.19.8                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.19.8  | AMD64<br>ARM64 |
-v0.18.9            | v1.18.9                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.18.9  | AMD64          |
+| Scheduler Plugins | Compiled With k8s Version | Container Image                                      | Arch           |
+|-------------------|---------------------------|------------------------------------------------------|----------------|
+| v0.22.6           | v1.22.6                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.22.6  | AMD64<br>ARM64 |
+| v0.21.6           | v1.21.6                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.21.6  | AMD64<br>ARM64 |
+| v0.20.10          | v1.20.10                  | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.20.10 | AMD64<br>ARM64 |
+| v0.19.9           | v1.19.9                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.19.9  | AMD64<br>ARM64 |
+| v0.19.8           | v1.19.8                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.19.8  | AMD64<br>ARM64 |
+| v0.18.9           | v1.18.9                   | k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.18.9  | AMD64          |
 
-Controller | Compiled With k8s Version | Container Image                                  | Arch           |
------------|---------------------------|--------------------------------------------------|----------------|
-v0.21.6    | v1.21.6                   | k8s.gcr.io/scheduler-plugins/controller:v0.21.6  | AMD64<br>ARM64 |
-v0.20.10   | v1.20.10                  | k8s.gcr.io/scheduler-plugins/controller:v0.20.10 | AMD64<br>ARM64 |
-v0.19.9    | v1.19.9                   | k8s.gcr.io/scheduler-plugins/controller:v0.19.9  | AMD64<br>ARM64 |
-v0.19.8    | v1.19.8                   | k8s.gcr.io/scheduler-plugins/controller:v0.19.8  | AMD64<br>ARM64 |
+| Controller | Compiled With k8s Version | Container Image                                  | Arch           |
+|------------|---------------------------|--------------------------------------------------|----------------|
+| v0.22.6    | v1.22.6                   | k8s.gcr.io/scheduler-plugins/controller:v0.22.6  | AMD64<br>ARM64 |
+| v0.21.6    | v1.21.6                   | k8s.gcr.io/scheduler-plugins/controller:v0.21.6  | AMD64<br>ARM64 |
+| v0.20.10   | v1.20.10                  | k8s.gcr.io/scheduler-plugins/controller:v0.20.10 | AMD64<br>ARM64 |
+| v0.19.9    | v1.19.9                   | k8s.gcr.io/scheduler-plugins/controller:v0.19.9  | AMD64<br>ARM64 |
+| v0.19.8    | v1.19.8                   | k8s.gcr.io/scheduler-plugins/controller:v0.19.8  | AMD64<br>ARM64 |
 
 ## Community, discussion, contribution, and support
 

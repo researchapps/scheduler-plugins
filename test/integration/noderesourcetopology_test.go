@@ -19,13 +19,10 @@ package integration
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,20 +31,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	apiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/pkg/scheduler"
 	schedapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
 	fwkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
-	testfwk "k8s.io/kubernetes/test/integration/framework"
-	testutil "k8s.io/kubernetes/test/integration/util"
 	imageutils "k8s.io/kubernetes/test/utils/image"
-	scheconfig "sigs.k8s.io/scheduler-plugins/pkg/apis/config"
+
+	scheconfig "sigs.k8s.io/scheduler-plugins/apis/config"
 	"sigs.k8s.io/scheduler-plugins/pkg/noderesourcetopology"
 	"sigs.k8s.io/scheduler-plugins/test/util"
-	"sigs.k8s.io/yaml"
 
 	topologyv1alpha1 "github.com/k8stopologyawareschedwg/noderesourcetopology-api/pkg/apis/topology/v1alpha1"
 	"github.com/k8stopologyawareschedwg/noderesourcetopology-api/pkg/generated/clientset/versioned"
@@ -59,35 +53,19 @@ const (
 )
 
 var (
-	leastAllocatableScheduler   = fmt.Sprintf("%v-scheduler", string(scheconfig.MostAllocated))
+	mostAllocatedScheduler      = fmt.Sprintf("%v-scheduler", string(scheconfig.MostAllocated))
 	balancedAllocationScheduler = fmt.Sprintf("%v-scheduler", string(scheconfig.BalancedAllocation))
-	mostAllocatableScheduler    = fmt.Sprintf("%v-scheduler", string(scheconfig.LeastAllocated))
+	leastAllocatedScheduler     = fmt.Sprintf("%v-scheduler", string(scheconfig.LeastAllocated))
 )
 
 func TestTopologyMatchPlugin(t *testing.T) {
-	t.Log("Creating API Server...")
-	// Start API Server with apiextensions supported.
-	server := apiservertesting.StartTestServerOrDie(
-		t, apiservertesting.NewDefaultTestServerOptions(),
-		[]string{"--disable-admission-plugins=ServiceAccount,TaintNodesByCondition,Priority", "--runtime-config=api/all=true"},
-		testfwk.SharedEtcd(),
-	)
-	testCtx := &testutil.TestContext{}
+	testCtx := &testContext{}
 	testCtx.Ctx, testCtx.CancelFn = context.WithCancel(context.Background())
-	testCtx.CloseFn = func() { server.TearDownFn() }
 
-	t.Log("Creating CRD...")
-	apiExtensionClient := apiextensionsclient.NewForConfigOrDie(server.ClientConfig)
-	ctx := testCtx.Ctx
-	if _, err := apiExtensionClient.ApiextensionsV1().CustomResourceDefinitions().Create(testCtx.Ctx, makeNodeResourceTopologyCRD(), metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	server.ClientConfig.ContentType = "application/json"
-	testCtx.KubeConfig = server.ClientConfig
-	cs := kubernetes.NewForConfigOrDie(testCtx.KubeConfig)
+	cs := kubernetes.NewForConfigOrDie(globalKubeConfig)
+	extClient := versioned.NewForConfigOrDie(globalKubeConfig)
 	testCtx.ClientSet = cs
-	extClient := versioned.NewForConfigOrDie(testCtx.KubeConfig)
+	testCtx.KubeConfig = globalKubeConfig
 
 	if err := wait.Poll(100*time.Millisecond, 3*time.Second, func() (done bool, err error) {
 		groupList, _, err := cs.ServerGroupsAndResources()
@@ -105,11 +83,8 @@ func TestTopologyMatchPlugin(t *testing.T) {
 		t.Fatalf("Timed out waiting for CRD to be ready: %v", err)
 	}
 
-	ns, err := cs.CoreV1().Namespaces().Create(ctx, &v1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("integration-test-%v", string(uuid.NewUUID()))}}, metav1.CreateOptions{})
-	if err != nil && !errors.IsAlreadyExists(err) {
-		t.Fatalf("Failed to create integration test ns: %v", err)
-	}
+	ns := fmt.Sprintf("integration-test-%v", string(uuid.NewUUID()))
+	createNamespace(t, testCtx, ns)
 
 	cfg, err := util.NewDefaultSchedulerComponentConfig()
 	if err != nil {
@@ -120,37 +95,37 @@ func TestTopologyMatchPlugin(t *testing.T) {
 	cfg.Profiles[0].PluginConfig = append(cfg.Profiles[0].PluginConfig, schedapi.PluginConfig{
 		Name: noderesourcetopology.Name,
 		Args: &scheconfig.NodeResourceTopologyMatchArgs{
-			Namespaces:      []string{ns.Name},
 			ScoringStrategy: scheconfig.ScoringStrategy{Type: scheconfig.MostAllocated},
 		},
 	})
 	cfg.Profiles = append(cfg.Profiles,
 		// a profile with both the filter and score enabled and score strategy is MostAllocated
 		makeProfileByPluginArgs(
-			leastAllocatableScheduler,
-			makeResourceAllocationScoreArgs(ns.Name, &scheconfig.ScoringStrategy{Type: scheconfig.MostAllocated}),
+			mostAllocatedScheduler,
+			makeResourceAllocationScoreArgs(&scheconfig.ScoringStrategy{Type: scheconfig.MostAllocated}),
 		),
 		// a profile with both the filter and score enabled and score strategy is BalancedAllocation
 		makeProfileByPluginArgs(
 			balancedAllocationScheduler,
-			makeResourceAllocationScoreArgs(ns.Name, &scheconfig.ScoringStrategy{Type: scheconfig.BalancedAllocation}),
+			makeResourceAllocationScoreArgs(&scheconfig.ScoringStrategy{Type: scheconfig.BalancedAllocation}),
 		),
 		// a profile with both the filter and score enabled and score strategy is LeastAllocated
 		makeProfileByPluginArgs(
-			mostAllocatableScheduler,
-			makeResourceAllocationScoreArgs(ns.Name, &scheconfig.ScoringStrategy{Type: scheconfig.LeastAllocated}),
+			leastAllocatedScheduler,
+			makeResourceAllocationScoreArgs(&scheconfig.ScoringStrategy{Type: scheconfig.LeastAllocated}),
 		),
 	)
 
-	testCtx = util.InitTestSchedulerWithOptions(
+	testCtx = initTestSchedulerWithOptions(
 		t,
 		testCtx,
-		true,
 		scheduler.WithProfiles(cfg.Profiles...),
 		scheduler.WithFrameworkOutOfTreeRegistry(fwkruntime.Registry{noderesourcetopology.Name: noderesourcetopology.New}),
 	)
+	syncInformerFactory(testCtx)
+	go testCtx.Scheduler.Run(testCtx.Ctx)
 	t.Log("Init scheduler success")
-	defer testutil.CleanupTest(t, testCtx)
+	defer cleanupTest(t, testCtx)
 
 	// Create a Node.
 	resList := map[v1.ResourceName]string{
@@ -160,7 +135,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 	}
 	for _, nodeName := range []string{"fake-node-1", "fake-node-2"} {
 		newNode := st.MakeNode().Name(nodeName).Label("node", nodeName).Capacity(resList).Obj()
-		n, err := cs.CoreV1().Nodes().Create(ctx, newNode, metav1.CreateOptions{})
+		n, err := cs.CoreV1().Nodes().Create(testCtx.Ctx, newNode, metav1.CreateOptions{})
 		if err != nil {
 			t.Fatalf("Failed to create Node %q: %v", nodeName, err)
 		}
@@ -168,7 +143,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 		t.Logf(" Node %s created: %v", nodeName, n)
 	}
 
-	nodeList, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodeList, err := cs.CoreV1().Nodes().List(testCtx.Ctx, metav1.ListOptions{})
 	t.Logf("NodeList: %v", nodeList)
 	pause := imageutils.GetPauseImageName()
 	for _, tt := range []struct {
@@ -180,11 +155,11 @@ func TestTopologyMatchPlugin(t *testing.T) {
 		{
 			name: "Filtering out nodes that cannot fit resources on a single numa node in case of Guaranteed pod",
 			pods: []*v1.Pod{
-				withContainer(withReqAndLimit(st.MakePod().Namespace(ns.Name).Name("topology-aware-scheduler-pod"), map[v1.ResourceName]string{v1.ResourceCPU: "4", v1.ResourceMemory: "5Gi"}).Obj(), pause),
+				withContainer(withReqAndLimit(st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod"), map[v1.ResourceName]string{v1.ResourceCPU: "4", v1.ResourceMemory: "5Gi"}).Obj(), pause),
 			},
 			nodeResourceTopologies: []*topologyv1alpha1.NodeResourceTopology{
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -222,7 +197,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -265,11 +240,11 @@ func TestTopologyMatchPlugin(t *testing.T) {
 		{
 			name: "Scheduling of a burstable pod requesting only cpus",
 			pods: []*v1.Pod{
-				withContainer(st.MakePod().Namespace(ns.Name).Name("topology-aware-scheduler-pod").Req(map[v1.ResourceName]string{v1.ResourceCPU: "4"}).Obj(), pause),
+				withContainer(st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").Req(map[v1.ResourceName]string{v1.ResourceCPU: "4"}).Obj(), pause),
 			},
 			nodeResourceTopologies: []*topologyv1alpha1.NodeResourceTopology{
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -297,7 +272,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -330,11 +305,11 @@ func TestTopologyMatchPlugin(t *testing.T) {
 		{
 			name: "Scheduling of a burstable pod requesting only memory",
 			pods: []*v1.Pod{
-				withContainer(st.MakePod().Namespace(ns.Name).Name("topology-aware-scheduler-pod").Req(map[v1.ResourceName]string{v1.ResourceMemory: "5Gi"}).Obj(), pause),
+				withContainer(st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").Req(map[v1.ResourceName]string{v1.ResourceMemory: "5Gi"}).Obj(), pause),
 			},
 			nodeResourceTopologies: []*topologyv1alpha1.NodeResourceTopology{
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -362,7 +337,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2"},
 					TopologyPolicies: []string{"foo"},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -393,14 +368,14 @@ func TestTopologyMatchPlugin(t *testing.T) {
 			expectedNodes: []string{"fake-node-1", "fake-node-2"},
 		},
 		{
-			name: "Scheduling Guaranteed pod with least-allocatable strategy scheduler",
+			name: "Scheduling Guaranteed pod with most-allocated strategy scheduler",
 			pods: []*v1.Pod{
-				withContainer(withReqAndLimit(st.MakePod().Namespace(ns.Name).Name("topology-aware-scheduler-pod").SchedulerName(leastAllocatableScheduler),
+				withContainer(withReqAndLimit(st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").SchedulerName(mostAllocatedScheduler),
 					map[v1.ResourceName]string{v1.ResourceCPU: "1", v1.ResourceMemory: "4Gi"}).Obj(), pause),
 			},
 			nodeResourceTopologies: []*topologyv1alpha1.NodeResourceTopology{
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -422,7 +397,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -449,12 +424,12 @@ func TestTopologyMatchPlugin(t *testing.T) {
 		{
 			name: "Scheduling Guaranteed pod with balanced-allocation strategy scheduler",
 			pods: []*v1.Pod{
-				withContainer(withReqAndLimit(st.MakePod().Namespace(ns.Name).Name("topology-aware-scheduler-pod").SchedulerName(balancedAllocationScheduler),
+				withContainer(withReqAndLimit(st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").SchedulerName(balancedAllocationScheduler),
 					map[v1.ResourceName]string{v1.ResourceCPU: "2", v1.ResourceMemory: "2Gi"}).Obj(), pause),
 			},
 			nodeResourceTopologies: []*topologyv1alpha1.NodeResourceTopology{
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -476,7 +451,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -501,14 +476,14 @@ func TestTopologyMatchPlugin(t *testing.T) {
 			expectedNodes: []string{"fake-node-2"},
 		},
 		{
-			name: "Scheduling Guaranteed pod with most-allocatable strategy scheduler",
+			name: "Scheduling Guaranteed pod with least-allocated strategy scheduler",
 			pods: []*v1.Pod{
-				withContainer(withReqAndLimit(st.MakePod().Namespace(ns.Name).Name("topology-aware-scheduler-pod").SchedulerName(mostAllocatableScheduler),
+				withContainer(withReqAndLimit(st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").SchedulerName(leastAllocatedScheduler),
 					map[v1.ResourceName]string{v1.ResourceCPU: "1", v1.ResourceMemory: "4Gi"}).Obj(), pause),
 			},
 			nodeResourceTopologies: []*topologyv1alpha1.NodeResourceTopology{
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-1"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -530,7 +505,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2", Namespace: ns.Name},
+					ObjectMeta:       metav1.ObjectMeta{Name: "fake-node-2"},
 					TopologyPolicies: []string{string(topologyv1alpha1.SingleNUMANodeContainerLevel)},
 					Zones: topologyv1alpha1.ZoneList{
 						topologyv1alpha1.Zone{
@@ -554,20 +529,46 @@ func TestTopologyMatchPlugin(t *testing.T) {
 			},
 			expectedNodes: []string{"fake-node-1"},
 		},
+		// in the following "Scheduling Best-Effort pod with most-allocated/balanced-allocation/least-allocated strategy" tests,
+		// both nodes are expected to get the maximum score.
+		// in case of multiple nodes with the same highest score, the chosen node selection might vary.
+		// thus, we can't tell exactly which node will get selected, so the only option is to accept both of them,
+		// and it's still good enough for making sure that pod not stuck in pending state and/or the program isn't crashing
+		{
+			name: "Scheduling Best-Effort pod with most-allocated strategy scheduler",
+			pods: []*v1.Pod{
+				st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").SchedulerName(mostAllocatedScheduler).Container(pause).Obj(),
+			},
+			expectedNodes: []string{"fake-node-1", "fake-node-2"},
+		},
+		{
+			name: "Scheduling Best-Effort pod with balanced-allocation strategy scheduler",
+			pods: []*v1.Pod{
+				st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").SchedulerName(balancedAllocationScheduler).Container(pause).Obj(),
+			},
+			expectedNodes: []string{"fake-node-1", "fake-node-2"},
+		},
+		{
+			name: "Scheduling Best-Effort pod with least-allocated strategy scheduler",
+			pods: []*v1.Pod{
+				st.MakePod().Namespace(ns).Name("topology-aware-scheduler-pod").SchedulerName(leastAllocatedScheduler).Container(pause).Obj(),
+			},
+			expectedNodes: []string{"fake-node-1", "fake-node-2"},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Logf("Start-topology-match-test %v", tt.name)
-			defer cleanupNodeResourceTopologies(ctx, extClient, tt.nodeResourceTopologies)
-			defer testutil.CleanupPods(cs, t, tt.pods)
+			defer cleanupNodeResourceTopologies(testCtx.Ctx, extClient, tt.nodeResourceTopologies)
+			defer cleanupPods(t, testCtx, tt.pods)
 
-			if err := createNodeResourceTopologies(ctx, extClient, tt.nodeResourceTopologies); err != nil {
+			if err := createNodeResourceTopologies(testCtx.Ctx, extClient, tt.nodeResourceTopologies); err != nil {
 				t.Fatal(err)
 			}
 
 			// Create Pods
 			for _, p := range tt.pods {
 				t.Logf("Creating Pod %q", p.Name)
-				_, err := cs.CoreV1().Pods(ns.Name).Create(context.TODO(), p, metav1.CreateOptions{})
+				_, err := cs.CoreV1().Pods(ns).Create(testCtx.Ctx, p, metav1.CreateOptions{})
 				if err != nil {
 					t.Fatalf("Failed to create Pod %q: %v", p.Name, err)
 				}
@@ -576,7 +577,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 			for _, p := range tt.pods {
 				// Wait for the pod to be scheduled.
 				if err := wait.Poll(1*time.Second, 20*time.Second, func() (bool, error) {
-					return podScheduled(cs, ns.Name, p.Name), nil
+					return podScheduled(cs, ns, p.Name), nil
 				}); err != nil {
 					t.Errorf("pod %q to be scheduled, error: %v", p.Name, err)
 				}
@@ -584,7 +585,7 @@ func TestTopologyMatchPlugin(t *testing.T) {
 				t.Logf("Pod %v scheduled", p.Name)
 
 				// The other pods should be scheduled on the small nodes.
-				nodeName, err := getNodeName(cs, ns.Name, p.Name)
+				nodeName, err := getNodeName(testCtx.Ctx, cs, ns, p.Name)
 				if err != nil {
 					t.Log(err)
 				}
@@ -611,33 +612,17 @@ func contains(s []string, e string) bool {
 }
 
 // getNodeName returns the name of the node if a node has assigned to the given pod
-func getNodeName(c clientset.Interface, podNamespace, podName string) (string, error) {
-	pod, err := c.CoreV1().Pods(podNamespace).Get(context.TODO(), podName, metav1.GetOptions{})
+func getNodeName(ctx context.Context, c clientset.Interface, podNamespace, podName string) (string, error) {
+	pod, err := c.CoreV1().Pods(podNamespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
 	return pod.Spec.NodeName, nil
 }
 
-// makeNodeResourceTopologyCRD prepares a CRD.
-func makeNodeResourceTopologyCRD() *apiextensionsv1.CustomResourceDefinition {
-	content, err := ioutil.ReadFile("../../manifests/noderesourcetopology/crd.yaml")
-	if err != nil {
-		return &apiextensionsv1.CustomResourceDefinition{}
-	}
-
-	noderesourcetopologyCRD := &apiextensionsv1.CustomResourceDefinition{}
-	err = yaml.Unmarshal(content, noderesourcetopologyCRD)
-	if err != nil {
-		return &apiextensionsv1.CustomResourceDefinition{}
-	}
-
-	return noderesourcetopologyCRD
-}
-
 func createNodeResourceTopologies(ctx context.Context, topologyClient *versioned.Clientset, noderesourcetopologies []*topologyv1alpha1.NodeResourceTopology) error {
 	for _, nrt := range noderesourcetopologies {
-		_, err := topologyClient.TopologyV1alpha1().NodeResourceTopologies(nrt.Namespace).Create(ctx, nrt, metav1.CreateOptions{})
+		_, err := topologyClient.TopologyV1alpha1().NodeResourceTopologies().Create(ctx, nrt, metav1.CreateOptions{})
 		if err != nil && !errors.IsAlreadyExists(err) {
 			return err
 		}
@@ -647,7 +632,7 @@ func createNodeResourceTopologies(ctx context.Context, topologyClient *versioned
 
 func cleanupNodeResourceTopologies(ctx context.Context, topologyClient *versioned.Clientset, noderesourcetopologies []*topologyv1alpha1.NodeResourceTopology) {
 	for _, nrt := range noderesourcetopologies {
-		err := topologyClient.TopologyV1alpha1().NodeResourceTopologies(nrt.Namespace).Delete(ctx, nrt.Name, metav1.DeleteOptions{})
+		err := topologyClient.TopologyV1alpha1().NodeResourceTopologies().Delete(ctx, nrt.Name, metav1.DeleteOptions{})
 		if err != nil {
 			klog.ErrorS(err, "Failed to clean up NodeResourceTopology", "nodeResourceTopology", nrt)
 		}
@@ -715,9 +700,8 @@ func makeProfileByPluginArgs(
 	}
 }
 
-func makeResourceAllocationScoreArgs(ns string, strategy *scheconfig.ScoringStrategy) *scheconfig.NodeResourceTopologyMatchArgs {
+func makeResourceAllocationScoreArgs(strategy *scheconfig.ScoringStrategy) *scheconfig.NodeResourceTopologyMatchArgs {
 	return &scheconfig.NodeResourceTopologyMatchArgs{
-		Namespaces:      []string{ns},
 		ScoringStrategy: *strategy,
 	}
 }

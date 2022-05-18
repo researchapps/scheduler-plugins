@@ -40,8 +40,8 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 
-	pluginConfig "sigs.k8s.io/scheduler-plugins/pkg/apis/config"
-	"sigs.k8s.io/scheduler-plugins/pkg/apis/config/v1beta2"
+	pluginConfig "sigs.k8s.io/scheduler-plugins/apis/config"
+	"sigs.k8s.io/scheduler-plugins/apis/config/v1beta2"
 	"sigs.k8s.io/scheduler-plugins/pkg/trimaran"
 )
 
@@ -83,7 +83,12 @@ func New(obj runtime.Object, handle framework.Handle) (framework.Plugin, error) 
 	if args.WatcherAddress != "" {
 		client, err = loadwatcherapi.NewServiceClient(args.WatcherAddress)
 	} else {
-		opts := watcher.MetricsProviderOpts{string(args.MetricProvider.Type), args.MetricProvider.Address, args.MetricProvider.Token}
+		opts := watcher.MetricsProviderOpts{
+			Name:               string(args.MetricProvider.Type),
+			Address:            args.MetricProvider.Address,
+			AuthToken:          args.MetricProvider.Token,
+			InsecureSkipVerify: args.MetricProvider.InsecureSkipVerify,
+		}
 		client, err = loadwatcherapi.NewLibraryClient(opts)
 	}
 	if err != nil {

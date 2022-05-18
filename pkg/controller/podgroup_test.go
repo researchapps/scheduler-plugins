@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,10 +16,9 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
 
-	"sigs.k8s.io/scheduler-plugins/pkg/apis/scheduling/v1alpha1"
+	"sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 	pgfake "sigs.k8s.io/scheduler-plugins/pkg/generated/clientset/versioned/fake"
 	schedinformer "sigs.k8s.io/scheduler-plugins/pkg/generated/informers/externalversions"
-	"sigs.k8s.io/scheduler-plugins/pkg/util"
 )
 
 func Test_Run(t *testing.T) {
@@ -26,7 +27,7 @@ func Test_Run(t *testing.T) {
 	cases := []struct {
 		name               string
 		pgName             string
-		minMember          uint32
+		minMember          int32
 		podNames           []string
 		podNextPhase       v1.PodPhase
 		podPhase           v1.PodPhase
@@ -110,7 +111,7 @@ func Test_Run(t *testing.T) {
 			podNextPhase:      v1.PodSucceeded,
 		},
 		{
-			name:               "Group group should not enqueue, created too long",
+			name:               "Group should not enqueue, created too long",
 			pgName:             "pg8",
 			minMember:          2,
 			podNames:           []string{"pod1", "pod2"},
@@ -120,33 +121,30 @@ func Test_Run(t *testing.T) {
 			podGroupCreateTime: &createTime,
 		},
 		{
-			name:              "Group group min member more than Pod number",
+			name:              "Group min member more than Pod number",
 			pgName:            "pg9",
 			minMember:         3,
 			podNames:          []string{"pod91", "pod92"},
 			podPhase:          v1.PodPending,
 			previousPhase:     v1alpha1.PodGroupPending,
-			desiredGroupPhase: v1alpha1.PodGroupPreScheduling,
+			desiredGroupPhase: v1alpha1.PodGroupPending,
+		},
+		{
+			name:              "Group status convert from running to pending",
+			pgName:            "pg10",
+			minMember:         2,
+			podNames:          []string{},
+			podPhase:          v1.PodPending,
+			previousPhase:     v1alpha1.PodGroupRunning,
+			desiredGroupPhase: v1alpha1.PodGroupPending,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			ps := makePods(c.podNames, c.pgName, c.podPhase)
-			kubeClient := fake.NewSimpleClientset(ps[0], ps[1])
-			pg := makePG(c.pgName, 2, c.previousPhase, c.podGroupCreateTime)
-			pgClient := pgfake.NewSimpleClientset(pg)
-
-			informerFactory := informers.NewSharedInformerFactory(kubeClient, controller.NoResyncPeriodFunc())
-			pgInformerFactory := schedinformer.NewSharedInformerFactory(pgClient, controller.NoResyncPeriodFunc())
-			podInformer := informerFactory.Core().V1().Pods()
-			pgInformer := pgInformerFactory.Scheduling().V1alpha1().PodGroups()
-			ctrl := NewPodGroupController(kubeClient, pgInformer, podInformer, pgClient)
-
-			pgInformerFactory.Start(ctx.Done())
-			informerFactory.Start(ctx.Done())
+			ctrl, kubeClient, pgClient := setUp(ctx, c.podNames, c.pgName, c.podPhase, c.minMember, c.previousPhase, c.podGroupCreateTime, nil)
 			// 0 means not set
 			if len(c.podNextPhase) != 0 {
-				ps := makePods(c.podNames, c.pgName, c.podNextPhase)
+				ps := makePods(c.podNames, c.pgName, c.podNextPhase, nil)
 				for _, p := range ps {
 					kubeClient.CoreV1().Pods(p.Namespace).UpdateStatus(ctx, p, metav1.UpdateOptions{})
 				}
@@ -170,12 +168,104 @@ func Test_Run(t *testing.T) {
 
 }
 
-func makePods(podNames []string, pgName string, phase v1.PodPhase) []*v1.Pod {
+func TestFillGroupStatusOccupied(t *testing.T) {
+	ctx := context.TODO()
+	cases := []struct {
+		name                 string
+		pgName               string
+		minMember            int32
+		podNames             []string
+		podPhase             v1.PodPhase
+		podOwnerReference    []metav1.OwnerReference
+		groupPhase           v1alpha1.PodGroupPhase
+		desiredGroupOccupied []string
+	}{
+		{
+			name:      "fill the Occupied of PodGroup with a single ownerReference",
+			pgName:    "pg",
+			minMember: 2,
+			podNames:  []string{"pod1", "pod2"},
+			podPhase:  v1.PodPending,
+			podOwnerReference: []metav1.OwnerReference{
+				{
+					Name: "new-occupied",
+				},
+			},
+			groupPhase:           v1alpha1.PodGroupPending,
+			desiredGroupOccupied: []string{"default/new-occupied"},
+		},
+		{
+			name:      "fill the Occupied of PodGroup with multi ownerReferences",
+			pgName:    "pg",
+			minMember: 2,
+			podNames:  []string{"pod1", "pod2"},
+			podPhase:  v1.PodPending,
+			podOwnerReference: []metav1.OwnerReference{
+				{
+					Name: "new-occupied-1",
+				},
+				{
+					Name: "new-occupied-2",
+				},
+			},
+			groupPhase:           v1alpha1.PodGroupPending,
+			desiredGroupOccupied: []string{"default/new-occupied-1", "default/new-occupied-2"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctrl, _, pgClient := setUp(ctx, c.podNames, c.pgName, c.podPhase, c.minMember, c.groupPhase, nil, c.podOwnerReference)
+			go ctrl.Run(1, ctx.Done())
+			err := wait.Poll(200*time.Millisecond, 1*time.Second, func() (done bool, err error) {
+				pg, err := pgClient.SchedulingV1alpha1().PodGroups("default").Get(ctx, c.pgName, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+				sort.Strings(c.desiredGroupOccupied)
+				desiredGroupOccupied := strings.Join(c.desiredGroupOccupied, ",")
+				if pg.Status.OccupiedBy != desiredGroupOccupied {
+					return false, fmt.Errorf("want %v, got %v", desiredGroupOccupied, pg.Status.OccupiedBy)
+				}
+				return true, nil
+			})
+			if err != nil {
+				t.Fatal("Unexpected error", err)
+			}
+		})
+	}
+}
+
+func setUp(ctx context.Context, podNames []string, pgName string, podPhase v1.PodPhase, minMember int32, groupPhase v1alpha1.PodGroupPhase, podGroupCreateTime *metav1.Time, podOwnerReference []metav1.OwnerReference) (*PodGroupController, *fake.Clientset, *pgfake.Clientset) {
+	var kubeClient *fake.Clientset
+	if len(podNames) == 0 {
+		kubeClient = fake.NewSimpleClientset()
+	} else {
+		ps := makePods(podNames, pgName, podPhase, podOwnerReference)
+		kubeClient = fake.NewSimpleClientset(ps[0], ps[1])
+	}
+	pg := makePG(pgName, minMember, groupPhase, podGroupCreateTime)
+	pgClient := pgfake.NewSimpleClientset(pg)
+
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, controller.NoResyncPeriodFunc())
+	pgInformerFactory := schedinformer.NewSharedInformerFactory(pgClient, controller.NoResyncPeriodFunc())
+	podInformer := informerFactory.Core().V1().Pods()
+	pgInformer := pgInformerFactory.Scheduling().V1alpha1().PodGroups()
+	ctrl := NewPodGroupController(kubeClient, pgInformer, podInformer, pgClient)
+
+	pgInformerFactory.Start(ctx.Done())
+	informerFactory.Start(ctx.Done())
+	return ctrl, kubeClient, pgClient
+}
+
+func makePods(podNames []string, pgName string, phase v1.PodPhase, reference []metav1.OwnerReference) []*v1.Pod {
 	pds := make([]*v1.Pod, 0)
 	for _, name := range podNames {
 		pod := st.MakePod().Namespace("default").Name(name).Obj()
-		pod.Labels = map[string]string{util.PodGroupLabel: pgName}
+		pod.Labels = map[string]string{v1alpha1.PodGroupLabel: pgName}
 		pod.Status.Phase = phase
+		if reference != nil && len(reference) != 0 {
+			pod.OwnerReferences = reference
+		}
 		pds = append(pds, pod)
 	}
 	return pds

@@ -33,7 +33,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 
-	"sigs.k8s.io/scheduler-plugins/pkg/apis/scheduling/v1alpha1"
+	"sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 	pgclientset "sigs.k8s.io/scheduler-plugins/pkg/generated/clientset/versioned"
 	pginformer "sigs.k8s.io/scheduler-plugins/pkg/generated/informers/externalversions/scheduling/v1alpha1"
 	pglister "sigs.k8s.io/scheduler-plugins/pkg/generated/listers/scheduling/v1alpha1"
@@ -62,6 +62,7 @@ type Manager interface {
 	AddDeniedPodGroup(string)
 	DeletePermittedPodGroup(string)
 	CalculateAssignedPods(string, string) int
+	ActivateSiblings(pod *corev1.Pod, state *framework.CycleState)
 }
 
 // PodGroupManager defines the scheduling operation called
@@ -105,6 +106,42 @@ func NewPodGroupManager(pgClient pgclientset.Interface, snapshotSharedLister fra
 	return pgMgr
 }
 
+// ActivateSiblings stashes the pods belonging to the same PodGroup of the given pod
+// in the given state, with a reserved key "kubernetes.io/pods-to-activate".
+func (pgMgr *PodGroupManager) ActivateSiblings(pod *corev1.Pod, state *framework.CycleState) {
+	pgName := util.GetPodGroupLabel(pod)
+	if pgName == "" {
+		return
+	}
+
+	pods, err := pgMgr.podLister.Pods(pod.Namespace).List(
+		labels.SelectorFromSet(labels.Set{v1alpha1.PodGroupLabel: pgName}),
+	)
+	if err != nil {
+		klog.ErrorS(err, "Failed to obtain pods belong to a PodGroup", "podGroup", pgName)
+		return
+	}
+	for i := range pods {
+		if pods[i].UID == pod.UID {
+			pods = append(pods[:i], pods[i+1:]...)
+			break
+		}
+	}
+
+	if len(pods) != 0 {
+		if c, err := state.Read(framework.PodsToActivateKey); err == nil {
+			if s, ok := c.(*framework.PodsToActivate); ok {
+				s.Lock()
+				for _, pod := range pods {
+					namespacedName := GetNamespacedName(pod)
+					s.Map[namespacedName] = pod
+				}
+				s.Unlock()
+			}
+		}
+	}
+}
+
 // PreFilter filters out a pod if it
 // 1. belongs to a podgroup that was recently denied or
 // 2. the total number of pods in the podgroup is less than the minimum number of pods
@@ -118,8 +155,8 @@ func (pgMgr *PodGroupManager) PreFilter(ctx context.Context, pod *corev1.Pod) er
 	if _, ok := pgMgr.LastDeniedPG.Get(pgFullName); ok {
 		return fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
 	}
-	pods, err := pgMgr.PodLister.Pods(pod.Namespace).List(
-		labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
+	pods, err := pgMgr.podLister.Pods(pod.Namespace).List(
+		labels.SelectorFromSet(labels.Set{v1alpha1.PodGroupLabel: util.GetPodGroupLabel(pod)}),
 	)
 	if err != nil {
 		return fmt.Errorf("podLister list pods failed: %v", err)
@@ -278,7 +315,7 @@ func (pgMgr *PodGroupManager) CalculateAssignedPods(podGroupName, namespace stri
 	for _, nodeInfo := range nodeInfos {
 		for _, podInfo := range nodeInfo.Pods {
 			pod := podInfo.Pod
-			if pod.Labels[util.PodGroupLabel] == podGroupName && pod.Namespace == namespace && pod.Spec.NodeName != "" {
+			if pod.Labels[v1alpha1.PodGroupLabel] == podGroupName && pod.Namespace == namespace && pod.Spec.NodeName != "" {
 				count++
 			}
 		}

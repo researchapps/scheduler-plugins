@@ -23,8 +23,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
-	apiconfig "sigs.k8s.io/scheduler-plugins/pkg/apis/config"
+	apiconfig "sigs.k8s.io/scheduler-plugins/apis/config"
 
+	"github.com/k8stopologyawareschedwg/noderesourcetopology-api/pkg/apis/topology"
 	topologyv1alpha1 "github.com/k8stopologyawareschedwg/noderesourcetopology-api/pkg/apis/topology/v1alpha1"
 	listerv1alpha1 "github.com/k8stopologyawareschedwg/noderesourcetopology-api/pkg/generated/listers/topology/v1alpha1"
 )
@@ -35,11 +36,6 @@ type NUMANode struct {
 }
 
 type NUMANodeList []NUMANode
-
-type nodeResTopologyPlugin struct {
-	lister     *listerv1alpha1.NodeResourceTopologyLister
-	namespaces []string
-}
 
 type tmScopeHandler struct {
 	filter func(pod *v1.Pod, zones topologyv1alpha1.ZoneList, nodeInfo *framework.NodeInfo) *framework.Status
@@ -64,7 +60,7 @@ type PolicyHandlerMap map[topologyv1alpha1.TopologyManagerPolicy]tmScopeHandler
 
 // TopologyMatch plugin which run simplified version of TopologyManager's admit handler
 type TopologyMatch struct {
-	nodeResTopologyPlugin
+	lister              listerv1alpha1.NodeResourceTopologyLister
 	policyHandlers      PolicyHandlerMap
 	scorerFn            scoreStrategy
 	resourceToWeightMap resourceToWeightMap
@@ -107,10 +103,7 @@ func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error)
 	}
 
 	topologyMatch := &TopologyMatch{
-		nodeResTopologyPlugin: nodeResTopologyPlugin{
-			lister:     lister,
-			namespaces: tcfg.Namespaces,
-		},
+		lister:              lister,
 		policyHandlers:      newPolicyHandlerMap(),
 		scorerFn:            scoringFunction,
 		resourceToWeightMap: resToWeightMap,
@@ -125,8 +118,12 @@ func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error)
 // should be registered for this plugin since a Pod update may free up resources
 // that make other Pods schedulable.
 func (tm *TopologyMatch) EventsToRegister() []framework.ClusterEvent {
+	// To register a custom event, follow the naming convention at:
+	// https://git.k8s.io/kubernetes/pkg/scheduler/eventhandlers.go#L403-L410
+	nrtGVK := fmt.Sprintf("noderesourcetopologies.v1alpha1.%v", topologyapi.GroupName)
 	return []framework.ClusterEvent{
 		{Resource: framework.Pod, ActionType: framework.Delete},
 		{Resource: framework.Node, ActionType: framework.Add | framework.UpdateNodeAllocatable},
+		{Resource: framework.GVK(nrtGVK), ActionType: framework.Add | framework.Update},
 	}
 }
