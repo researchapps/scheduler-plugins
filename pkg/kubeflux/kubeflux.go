@@ -66,35 +66,28 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	ctx := context.TODO()
 	kfcore.Init()
 
+
 	fluxPodsInformer := handle.SharedInformerFactory().Core().V1().Pods().Informer()
 	fluxPodsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: kf.updatePod,
 		DeleteFunc: kf.deletePod,
 	})
+	
 	go fluxPodsInformer.Run(ctx.Done())
 	klog.Info("Create generic pod informer")
 
 	pgclient := pgclientset.NewForConfigOrDie(handle.KubeConfig())
 	podGroupInformerFactory := schedinformer.NewSharedInformerFactory(pgclient, 0)
 	podGroupInformer := podGroupInformerFactory.Scheduling().V1alpha1().PodGroups()
-	// pginf := podGroupInformer.Informer()
-
-	/*
-	pgClient := pgclientset.NewForConfigOrDie(handle.KubeConfig())
-	pgInformerFactory := pgformers.NewSharedInformerFactory(pgClient, 0)
-	pgInformer := pgInformerFactory.Scheduling().V1alpha1().PodGroups()
-	podInformer := handle.SharedInformerFactory().Core().V1().Pods()
-	*/
 
 	klog.Info("Create pod group")
-
+	
 	fieldSelector, err := fields.ParseSelector(",status.phase!=" + string(v1.PodSucceeded) + ",status.phase!=" + string(v1.PodFailed))
 	if err != nil {
 		klog.ErrorS(err, "ParseSelector failed")
 		os.Exit(1)
 	}
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(handle.ClientSet(), 0, informers.WithTweakListOptions(func(opt *metav1.ListOptions) {
-		// opt.LabelSelector = util.PodGroupLabel
 		opt.FieldSelector = fieldSelector.String()
 	}))
 	podInformer := informerFactory.Core().V1().Pods()
@@ -341,7 +334,7 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 func (kf *KubeFlux) updatePod(oldObj, newObj interface{}) {
 	// klog.Info("Update Pod event handler")
 	newPod := newObj.(*v1.Pod)
-
+	klog.Infof("Processing event for pod %s", newPod)
 	switch newPod.Status.Phase {
 	case v1.PodPending:
 		// in this state we don't know if a pod is going to be running, thus we don't need to update job map
@@ -383,7 +376,18 @@ func (kf *KubeFlux) deletePod(podObj interface{}) {
 	pod := podObj.(*v1.Pod)
 	klog.Info("Pod status: ", pod.Status.Phase)
 	switch pod.Status.Phase {
+	case v1.PodSucceeded:
 	case v1.PodPending:
+		klog.Infof("Pod %s completed and is Pending termination, kubeflux needs to free the resources", pod.Name)
+
+		kf.mutex.Lock()
+		defer kf.mutex.Unlock()
+
+		if _, ok := kf.podNameToJobId[pod.Name]; ok {
+			kf.cancelFluxJobForPod(pod.Name)
+		} else {
+			klog.Infof("Terminating pod %s/%s doesn't have flux jobid", pod.Namespace, pod.Name)
+		}
 	case v1.PodRunning:
 		kf.mutex.Lock()
 		defer kf.mutex.Unlock()
