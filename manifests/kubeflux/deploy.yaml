@@ -23,7 +23,7 @@ spec:
           - /go/src/kubeflux/bin/server
           - --policy=lonode
           name: kubeflux-sidecar
-        - image: quay.io/cmisale1/kubeflux:latest
+        - image: quay.io/cmisale1/kubeflux:upstream
           imagePullPolicy: Always
           command:
           - /bin/kube-scheduler
