@@ -103,8 +103,7 @@ profiles:
 						{
 							Name: coscheduling.Name,
 							Args: &config.CoschedulingArgs{
-								PermitWaitingTimeSeconds:      10,
-								DeniedPGExpirationTimeSeconds: 3,
+								PermitWaitingTimeSeconds: 10,
 							},
 						},
 						{
@@ -120,30 +119,32 @@ profiles:
 						{
 							Name: targetloadpacking.Name,
 							Args: &config.TargetLoadPackingArgs{
+								TrimaranSpec: config.TrimaranSpec{
+									MetricProvider: config.MetricProviderSpec{
+										Type:               config.Prometheus,
+										Address:            "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
+										InsecureSkipVerify: true,
+									},
+									WatcherAddress: "http://deadbeef:2020"},
 								TargetUtilization: 60,
 								DefaultRequests: corev1.ResourceList{
 									corev1.ResourceCPU: testCPUQuantity,
 								},
 								DefaultRequestsMultiplier: "1.8",
-								WatcherAddress:            "http://deadbeef:2020",
-								MetricProvider: config.MetricProviderSpec{
-									Type:               config.Prometheus,
-									Address:            "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
-									InsecureSkipVerify: true,
-								},
 							},
 						},
 						{
 							Name: loadvariationriskbalancing.Name,
 							Args: &config.LoadVariationRiskBalancingArgs{
+								TrimaranSpec: config.TrimaranSpec{
+									MetricProvider: config.MetricProviderSpec{
+										Type:               config.Prometheus,
+										Address:            "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
+										InsecureSkipVerify: false,
+									},
+									WatcherAddress: "http://deadbeef:2020"},
 								SafeVarianceMargin:      v1beta2.DefaultSafeVarianceMargin,
 								SafeVarianceSensitivity: v1beta2.DefaultSafeVarianceSensitivity,
-								WatcherAddress:          "http://deadbeef:2020",
-								MetricProvider: config.MetricProviderSpec{
-									Type:               config.Prometheus,
-									Address:            "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
-									InsecureSkipVerify: false,
-								},
 							},
 						},
 						{
@@ -214,8 +215,7 @@ profiles:
 						{
 							Name: coscheduling.Name,
 							Args: &config.CoschedulingArgs{
-								PermitWaitingTimeSeconds:      60,
-								DeniedPGExpirationTimeSeconds: 20,
+								PermitWaitingTimeSeconds: 60,
 							},
 						},
 						{
@@ -231,30 +231,32 @@ profiles:
 						{
 							Name: targetloadpacking.Name,
 							Args: &config.TargetLoadPackingArgs{
+								TrimaranSpec: config.TrimaranSpec{
+									MetricProvider: config.MetricProviderSpec{
+										Type:    config.KubernetesMetricsServer,
+										Address: "",
+										Token:   "",
+									},
+									WatcherAddress: ""},
 								TargetUtilization: 40,
 								DefaultRequests: corev1.ResourceList{
 									corev1.ResourceCPU: testCPUQuantity,
 								},
 								DefaultRequestsMultiplier: "1.5",
-								WatcherAddress:            "",
-								MetricProvider: config.MetricProviderSpec{
-									Type:    config.KubernetesMetricsServer,
-									Address: "",
-									Token:   "",
-								},
 							},
 						},
 						{
 							Name: loadvariationriskbalancing.Name,
 							Args: &config.LoadVariationRiskBalancingArgs{
+								TrimaranSpec: config.TrimaranSpec{
+									MetricProvider: config.MetricProviderSpec{
+										Type:    config.KubernetesMetricsServer,
+										Address: "",
+										Token:   "",
+									},
+									WatcherAddress: ""},
 								SafeVarianceMargin:      v1beta2.DefaultSafeVarianceMargin,
 								SafeVarianceSensitivity: v1beta2.DefaultSafeVarianceSensitivity,
-								WatcherAddress:          "",
-								MetricProvider: config.MetricProviderSpec{
-									Type:    config.KubernetesMetricsServer,
-									Address: "",
-									Token:   "",
-								},
 							},
 						},
 						{
@@ -310,7 +312,7 @@ profiles:
     args:
       kubeConfigPath: "/var/run/kubernetes/kube.config"
 `),
-			wantErr: `decoding .profiles[0].pluginConfig[0]: decoding args for plugin Coscheduling: strict decoding error: unknown field "kubeConfigPath"`,
+			wantErr: `strict decoding error: decoding .profiles[0].pluginConfig[0]: strict decoding error: decoding args for plugin Coscheduling: strict decoding error: unknown field "kubeConfigPath"`,
 		},
 	}
 	decoder := Codecs.UniversalDecoder()
@@ -356,8 +358,7 @@ func TestCodecsEncodePluginConfig(t *testing.T) {
 							{
 								Name: coscheduling.Name,
 								Args: &config.CoschedulingArgs{
-									PermitWaitingTimeSeconds:      10,
-									DeniedPGExpirationTimeSeconds: 3,
+									PermitWaitingTimeSeconds: 10,
 								},
 							},
 							{
@@ -373,29 +374,31 @@ func TestCodecsEncodePluginConfig(t *testing.T) {
 							{
 								Name: targetloadpacking.Name,
 								Args: &config.TargetLoadPackingArgs{
+									TrimaranSpec: config.TrimaranSpec{
+										MetricProvider: config.MetricProviderSpec{
+											Type:    config.Prometheus,
+											Address: "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
+										},
+										WatcherAddress: "http://deadbeef:2020"},
 									TargetUtilization: 60,
 									DefaultRequests: corev1.ResourceList{
 										corev1.ResourceCPU: testCPUQuantity,
 									},
 									DefaultRequestsMultiplier: "1.8",
-									WatcherAddress:            "http://deadbeef:2020",
-									MetricProvider: config.MetricProviderSpec{
-										Type:    config.Prometheus,
-										Address: "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
-									},
 								},
 							},
 							{
 								Name: loadvariationriskbalancing.Name,
 								Args: &config.LoadVariationRiskBalancingArgs{
+									TrimaranSpec: config.TrimaranSpec{
+										MetricProvider: config.MetricProviderSpec{
+											Type:               config.Prometheus,
+											Address:            "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
+											InsecureSkipVerify: false,
+										},
+										WatcherAddress: "http://deadbeef:2020"},
 									SafeVarianceMargin:      v1beta2.DefaultSafeVarianceMargin,
 									SafeVarianceSensitivity: v1beta2.DefaultSafeVarianceSensitivity,
-									WatcherAddress:          "http://deadbeef:2020",
-									MetricProvider: config.MetricProviderSpec{
-										Type:               config.Prometheus,
-										Address:            "http://prometheus-k8s.monitoring.svc.cluster.local:9090",
-										InsecureSkipVerify: false,
-									},
 								},
 							},
 						},
@@ -430,7 +433,6 @@ profiles:
 - pluginConfig:
   - args:
       apiVersion: kubescheduler.config.k8s.io/v1beta2
-      deniedPGExpirationTimeSeconds: 3
       kind: CoschedulingArgs
       permitWaitingTimeSeconds: 10
     name: Coscheduling

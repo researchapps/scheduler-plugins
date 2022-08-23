@@ -54,15 +54,20 @@ func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
 	testCtx.KubeConfig = globalKubeConfig
 
 	metrics := watcher.WatcherMetrics{
-		Window: watcher.Window{},
+		Timestamp: 1556987522,
+		Window: watcher.Window{
+			Duration: "15m",
+			Start:    1556984522,
+			End:      1556985422,
+		},
 		Data: watcher.Data{
 			NodeMetricsMap: map[string]watcher.NodeMetrics{
 				"node-1": {
 					Metrics: []watcher.Metric{
 						{
 							Type:     watcher.CPU,
-							Value:    10,
-							Operator: watcher.Latest,
+							Value:    30,
+							Operator: watcher.Average,
 						},
 					},
 				},
@@ -70,8 +75,13 @@ func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
 					Metrics: []watcher.Metric{
 						{
 							Type:     watcher.CPU,
-							Value:    60,
-							Operator: watcher.Latest,
+							Value:    70,
+							Operator: watcher.Average,
+						},
+						{
+							Type:     watcher.CPU,
+							Operator: watcher.Std,
+							Value:    20,
 						},
 					},
 				},
@@ -79,8 +89,13 @@ func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
 					Metrics: []watcher.Metric{
 						{
 							Type:     watcher.CPU,
-							Value:    0,
-							Operator: watcher.Latest,
+							Value:    40,
+							Operator: watcher.Average,
+						},
+						{
+							Type:     watcher.CPU,
+							Operator: watcher.Std,
+							Value:    30,
 						},
 					},
 				},
@@ -109,14 +124,13 @@ func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
 	cfg.Profiles[0].PluginConfig = append(cfg.Profiles[0].PluginConfig, schedapi.PluginConfig{
 		Name: loadvariationriskbalancing.Name,
 		Args: &config.LoadVariationRiskBalancingArgs{
-			WatcherAddress:     server.URL,
+			TrimaranSpec:       config.TrimaranSpec{WatcherAddress: server.URL},
 			SafeVarianceMargin: v1beta2.DefaultSafeVarianceMargin,
 		},
 	})
 
 	ns := fmt.Sprintf("integration-test-%v", string(uuid.NewUUID()))
 	createNamespace(t, testCtx, ns)
-
 	testCtx = initTestSchedulerWithOptions(
 		t,
 		testCtx,
@@ -163,7 +177,7 @@ func TestLoadVariationRiskBalancingPlugin(t *testing.T) {
 	}
 	defer cleanupPods(t, testCtx, newPods)
 
-	expected := [2]string{nodeNames[2], nodeNames[2]}
+	expected := [2]string{"node-1", "node-1"}
 	for i := range newPods {
 		err := wait.Poll(1*time.Second, 10*time.Second, func() (bool, error) {
 			return podScheduled(cs, newPods[i].Namespace, newPods[i].Name), nil
