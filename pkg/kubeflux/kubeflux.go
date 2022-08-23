@@ -93,9 +93,8 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	podInformer := informerFactory.Core().V1().Pods()
 
 	scheduleTimeDuration := time.Duration(500) * time.Second
-	deniedPGExpirationTime := time.Duration(500) * time.Second
 
-	pgMgr := core.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
+	pgMgr := core.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, podGroupInformer, podInformer)
 	kf.pgMgr = pgMgr
 
 
@@ -116,7 +115,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	return kf, nil
 }
 
-func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
+func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	klog.Infof("Examining the pod")
 	var err error
 	var nodename string
@@ -131,25 +130,25 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 			// 	return framework.NewStatus(framework.Unschedulable, err.Error())
 			// }
 			if _, err = kf.AskFlux(pod, groupSize); err != nil {
-				return framework.NewStatus(framework.Unschedulable, err.Error())
+				return nil, framework.NewStatus(framework.Unschedulable, err.Error())
 			}
 			// klog.Infof("Group size %d: ", nodename, groupSize)
 		}
 		nodename, err = kfcore.GetNextNode(pgname)
 		klog.Infof("Node Selected %s (%s:%s)", nodename, pod.Name, pgname)
 		if err != nil {
-			return framework.NewStatus(framework.Unschedulable, err.Error())
+			return nil, framework.NewStatus(framework.Unschedulable, err.Error())
 		}
 	} else {
 		nodename, err = kf.AskFlux(pod, 1)
 		if err != nil {
-			return framework.NewStatus(framework.Unschedulable, err.Error())
+			return nil, framework.NewStatus(framework.Unschedulable, err.Error())
 		}
 	}
 
 	klog.Info("Node Selected: ", nodename)
 	state.Write(framework.StateKey(pod.Name), &kfcore.FluxStateData{NodeName: nodename})
-	return framework.NewStatus(framework.Success, "")
+	return nil, framework.NewStatus(framework.Success, "")
 
 	// if nodenames == nil {
 	// 	klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodenames)
