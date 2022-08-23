@@ -71,11 +71,10 @@ func New(obj runtime.Object, handle framework.Handle) (framework.Plugin, error) 
 	podInformer := handle.SharedInformerFactory().Core().V1().Pods()
 
 	scheduleTimeDuration := time.Duration(args.PermitWaitingTimeSeconds) * time.Second
-	deniedPGExpirationTime := time.Duration(args.DeniedPGExpirationTimeSeconds) * time.Second
 
 	ctx := context.TODO()
 
-	pgMgr := core.NewPodGroupManager(pgClient, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, pgInformer, podInformer)
+	pgMgr := core.NewPodGroupManager(pgClient, handle.SnapshotSharedLister(), &scheduleTimeDuration, pgInformer, podInformer)
 	plugin := &Coscheduling{
 		frameworkHandler: handle,
 		pgMgr:            pgMgr,
@@ -127,17 +126,17 @@ func (cs *Coscheduling) Less(podInfo1, podInfo2 *framework.QueuedPodInfo) bool {
 // PreFilter performs the following validations.
 // 1. Whether the PodGroup that the Pod belongs to is on the deny list.
 // 2. Whether the total number of pods in a PodGroup is less than its `minMember`.
-func (cs *Coscheduling) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
+func (cs *Coscheduling) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	// If PreFilter fails, return framework.UnschedulableAndUnresolvable to avoid
 	// any preemption attempts.
 	if err := cs.pgMgr.PreFilter(ctx, pod); err != nil {
 		klog.ErrorS(err, "PreFilter failed", "pod", klog.KObj(pod))
-		return framework.NewStatus(framework.UnschedulableAndUnresolvable, err.Error())
+		return nil, framework.NewStatus(framework.UnschedulableAndUnresolvable, err.Error())
 	}
-	return framework.NewStatus(framework.Success, "")
+	return nil, framework.NewStatus(framework.Success, "")
 }
 
-// PostFilter is used to rejecting a group of pods if a pod does not pass PreFilter or Filter.
+// PostFilter is used to reject a group of pods if a pod does not pass PreFilter or Filter.
 func (cs *Coscheduling) PostFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod,
 	filteredNodeStatusMap framework.NodeToStatusMap) (*framework.PostFilterResult, *framework.Status) {
 	pgName, pg := cs.pgMgr.GetPodGroup(pod)
@@ -170,7 +169,6 @@ func (cs *Coscheduling) PostFilter(ctx context.Context, state *framework.CycleSt
 			waitingPod.Reject(cs.Name(), "optimistic rejection in PostFilter")
 		}
 	})
-	cs.pgMgr.AddDeniedPodGroup(pgName)
 	cs.pgMgr.DeletePermittedPodGroup(pgName)
 	return &framework.PostFilterResult{}, framework.NewStatus(framework.Unschedulable,
 		fmt.Sprintf("PodGroup %v gets rejected due to Pod %v is unschedulable even after PostFilter", pgName, pod.Name))
@@ -233,7 +231,6 @@ func (cs *Coscheduling) Unreserve(ctx context.Context, state *framework.CycleSta
 			waitingPod.Reject(cs.Name(), "rejection in Unreserve")
 		}
 	})
-	cs.pgMgr.AddDeniedPodGroup(pgName)
 	cs.pgMgr.DeletePermittedPodGroup(pgName)
 }
 

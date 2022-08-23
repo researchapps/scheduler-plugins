@@ -3,7 +3,7 @@
 ## Table of Contents
 
 - [Create a Kubernetes Cluster](#create-a-kubernetes-cluster)
-- [Install release v0.22.6 and use Coscheduling](#install-release-v0226-and-use-coscheduling)
+- [Install release v0.23.10 and use Coscheduling](#install-release-v02310-and-use-coscheduling)
     - [As a second scheduler](#as-a-second-scheduler)
     - [As a single scheduler(replacing the vanilla default-scheduler)](#as-a-single-schedulerreplacing-the-vanilla-default-scheduler)
 - [Test Coscheduling](#test-coscheduling)
@@ -14,7 +14,7 @@
 
 Firstly you need to have a Kubernetes cluster, and a `kubectl` command-line tool must be configured to communicate with the cluster.
 
-The Kubernetes version must equal to or greater than **v1.22.0**. To check the version, use `kubectl version --short`.
+The Kubernetes version must equal to or greater than **v1.23.0**. To check the version, use `kubectl version --short`.
 
 If you do not have a cluster yet, create one by using one of the following provision tools:
 
@@ -22,47 +22,29 @@ If you do not have a cluster yet, create one by using one of the following provi
 * [kubeadm](https://kubernetes.io/docs/admin/kubeadm/)
 * [minikube](https://minikube.sigs.k8s.io/)
 
-## Install release v0.22.6 and use Coscheduling
+## Install release v0.23.10 and use Coscheduling
 
 Note: we provide two ways to install the scheduler-plugin artifacts: as a second scheduler
 and as a single scheduler. Their pros and cons are as below:
 
-- **second scheduler:** the pro is it's easy to install by deploying the Helm chart, and the con is
-running multi-scheduler will inevitably encounter resource conflicts when the cluster is short of
-resources, and hence not recommended in the production env. However, it's a good starting point to play with
-scheduler framework and exercise plugin development, no matter you're on managed or on-premise Kubernetes clusters.
-- **single scheduler:** the pro is you will be using a unified scheduler and hence keep the resource
-conflicting free. It's recommended in the production env. However, the con is that you have to have
-the privileges to manipulate on control plane, also for this moment, the installation is not fully
-automated (no Helm chart yet).
+- **second scheduler:**
+  - **pro**: it's easy to install by deploying the Helm chart
+  - **con**: running multi-scheduler will inevitably encounter resource conflicts when the cluster is short of resources.
+
+    Consider the scenario where multiple schedulers attempt to assign their pods simultaneously to a node which can only fit one of the pods.
+    The pod that arrives later will be evicted by the kubelet, and hang there (without its `.spec.nodeName` cleared) until resources get released on the node.
+
+    Running multiple schedulers, therefore, is not recommended in the production env. However, it's a good starting point to play with
+    scheduler framework and exercise plugin development, no matter you're on managed or on-premise Kubernetes clusters.
+- **single scheduler:**
+  - **pro**: you will be using a unified scheduler and hence keep the resources conflict-free. It's recommended for the production env.
+  - **con**: you have to have the privileges to manipulate the control plane, and at this moment, the installation is not fully automated (no Helm chart yet).
 
 ### As a second scheduler
 The quickest way to try scheduler-plugins is to install it using helm chart as a second scheduler.
 You can find the demo chart in [manifests/install/charts](../manifests/install/charts). **But if in the production environment, it is recommended to replace the default-scheduler manually(as described in next section).**
 
-1. Helm install.
-
-    ```bash
-    $ git clone git@github.com:kubernetes-sigs/scheduler-plugins.git
-    $ cd scheduler-plugins/manifests/install/charts
-    $ helm install scheduler-plugins as-a-second-scheduler/
-      ...
-      NAME: scheduler-plugins
-      LAST DEPLOYED: Tue Feb  8 09:53:27 2022
-      NAMESPACE: default
-      STATUS: deployed
-      REVISION: 1
-      TEST SUITE: None
-    ```
-
-1. Verify that scheduler and plugin-controller pod are running properly.
-
-    ```bash
-    $ kubectl get deploy -n scheduler-plugins
-    NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
-    scheduler-plugins-controller   1/1     1            1           7s
-    scheduler-plugins-scheduler    1/1     1            1           7s
-    ```
+[Install using Helm Chart](../manifests/install/charts/as-a-second-scheduler/README.md#installing-the-chart)
 
 ### As a single scheduler (replacing the vanilla default-scheduler)
 
@@ -96,7 +78,7 @@ any vanilla Kubernetes scheduling capability. Instead, a lot of extra out-of-box
 1. Create `/etc/kubernetes/sched-cc.yaml`
 
     ```yaml
-    apiVersion: kubescheduler.config.k8s.io/v1beta2
+    apiVersion: kubescheduler.config.k8s.io/v1beta3
     kind: KubeSchedulerConfiguration
     leaderElection:
       # (Optional) Change true to false if you are not running a HA control-plane.
@@ -106,26 +88,11 @@ any vanilla Kubernetes scheduling capability. Instead, a lot of extra out-of-box
     profiles:
     - schedulerName: default-scheduler
       plugins:
-        queueSort:
+        multiPoint:
           enabled:
           - name: Coscheduling
           disabled:
-          - name: "*"
-        preFilter:
-          enabled:
-          - name: Coscheduling
-        postFilter:
-          enabled:
-          - name: Coscheduling
-        permit:
-          enabled:
-          - name: Coscheduling
-        reserve:
-          enabled:
-          - name: Coscheduling
-        postBind:
-          enabled:
-          - name: Coscheduling
+          - name: PrioritySort
     ```
 
 1. **❗IMPORTANT**❗ Starting with release v0.19, several plugins (e.g., coscheduling) introduced CRD
@@ -177,9 +144,9 @@ any vanilla Kubernetes scheduling capability. Instead, a lot of extra out-of-box
     >     - --kubeconfig=/etc/kubernetes/scheduler.conf
     >     - --leader-elect=true
     19,20c20
-    <     image: k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.22.6
+    <     image: k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.23.10
     ---
-    >     image: k8s.gcr.io/kube-scheduler:v1.22.6
+    >     image: k8s.gcr.io/kube-scheduler:v1.23.10
     50,52d49
     <     - mountPath: /etc/kubernetes/sched-cc.yaml
     <       name: sched-cc
@@ -198,7 +165,7 @@ any vanilla Kubernetes scheduling capability. Instead, a lot of extra out-of-box
     kube-scheduler-kind-control-plane            1/1     Running   0          3m27s
  
     $ kubectl get pods -l component=kube-scheduler -n kube-system -o=jsonpath="{.items[0].spec.containers[0].image}{'\n'}"
-    k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.22.6
+    k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.23.10
     ```
    
     > **⚠️Troubleshooting:** If the kube-scheudler is not up, you may need to restart kubelet service inside the kind control plane (`systemctl restart kubelet.service`)
@@ -249,17 +216,17 @@ Now, we're able to verify how the coscheduling plugin works.
             image: k8s.gcr.io/pause:3.6
     ```
 
-> **⚠️Note:️** If you are running scheduler-plugins as a second scheduler, you should explicitly
-> specify `.spec.schedulerName` to match the secondary scheduler name:
-> ```yaml
-> # deploy.yaml
-> ...
-> spec:
->   ...
->   template:
->     spec:
->       schedulerName: scheduler-plugins-scheduler
-> ```
+    > **⚠️Note:️** If you are running scheduler-plugins as a second scheduler, you should explicitly
+    > specify `.spec.schedulerName` to match the secondary scheduler name:
+    > ```yaml
+    > # deploy.yaml
+    > ...
+    > spec:
+    >   ...
+    >   template:
+    >     spec:
+    >       schedulerName: scheduler-plugins-scheduler
+    > ```
 
 1. As PodGroup `pg1` requires at least 3 pods to be scheduled all-together, and there are only 2 Pods
    so far, so it's expected to observer they are pending:
