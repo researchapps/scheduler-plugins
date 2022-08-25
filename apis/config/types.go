@@ -28,10 +28,8 @@ import (
 type CoschedulingArgs struct {
 	metav1.TypeMeta
 
-	// PermitWaitingTime is the wait timeout in seconds.
+	// PermitWaitingTimeSeconds is the waiting timeout in seconds.
 	PermitWaitingTimeSeconds int64
-	// DeniedPGExpirationTimeSeconds is the expiration time of the denied podgroup store.
-	DeniedPGExpirationTimeSeconds int64
 }
 
 // ModeType is a "string" type.

@@ -27,42 +27,24 @@ If you do not have a cluster yet, create one by using one of the following provi
 Note: we provide two ways to install the scheduler-plugin artifacts: as a second scheduler
 and as a single scheduler. Their pros and cons are as below:
 
-- **second scheduler:** the pro is it's easy to install by deploying the Helm chart, and the con is
-running multi-scheduler will inevitably encounter resource conflicts when the cluster is short of
-resources, and hence not recommended in the production env. However, it's a good starting point to play with
-scheduler framework and exercise plugin development, no matter you're on managed or on-premise Kubernetes clusters.
-- **single scheduler:** the pro is you will be using a unified scheduler and hence keep the resource
-conflicting free. It's recommended in the production env. However, the con is that you have to have
-the privileges to manipulate on control plane, also for this moment, the installation is not fully
-automated (no Helm chart yet).
+- **second scheduler:**
+  - **pro**: it's easy to install by deploying the Helm chart
+  - **con**: running multi-scheduler will inevitably encounter resource conflicts when the cluster is short of resources.
+
+    Consider the scenario where multiple schedulers attempt to assign their pods simultaneously to a node which can only fit one of the pods.
+    The pod that arrives later will be evicted by the kubelet, and hang there (without its `.spec.nodeName` cleared) until resources get released on the node.
+
+    Running multiple schedulers, therefore, is not recommended in the production env. However, it's a good starting point to play with
+    scheduler framework and exercise plugin development, no matter you're on managed or on-premise Kubernetes clusters.
+- **single scheduler:**
+  - **pro**: you will be using a unified scheduler and hence keep the resources conflict-free. It's recommended for the production env.
+  - **con**: you have to have the privileges to manipulate the control plane, and at this moment, the installation is not fully automated (no Helm chart yet).
 
 ### As a second scheduler
 The quickest way to try scheduler-plugins is to install it using helm chart as a second scheduler.
 You can find the demo chart in [manifests/install/charts](../manifests/install/charts). **But if in the production environment, it is recommended to replace the default-scheduler manually(as described in next section).**
 
-1. Helm install.
-
-    ```bash
-    $ git clone git@github.com:kubernetes-sigs/scheduler-plugins.git
-    $ cd scheduler-plugins/manifests/install/charts
-    $ helm install scheduler-plugins as-a-second-scheduler/
-      ...
-      NAME: scheduler-plugins
-      LAST DEPLOYED: Tue Feb  8 09:53:27 2022
-      NAMESPACE: default
-      STATUS: deployed
-      REVISION: 1
-      TEST SUITE: None
-    ```
-
-1. Verify that scheduler and plugin-controller pod are running properly.
-
-    ```bash
-    $ kubectl get deploy -n scheduler-plugins
-    NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
-    scheduler-plugins-controller   1/1     1            1           7s
-    scheduler-plugins-scheduler    1/1     1            1           7s
-    ```
+[Install using Helm Chart](../manifests/install/charts/as-a-second-scheduler/README.md#installing-the-chart)
 
 ### As a single scheduler (replacing the vanilla default-scheduler)
 
