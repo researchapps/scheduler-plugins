@@ -45,7 +45,7 @@ type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
 	podNameToJobId map[string]uint64
-	pgMgr          *core.PodGroupManager
+	pgMgr          core.Manager
 }
 
 var _ framework.PreFilterPlugin = &KubeFlux{}
@@ -207,6 +207,7 @@ func (kf *KubeFlux) Filter(ctx context.Context, cycleState *framework.CycleState
 }
 
 func (kf *KubeFlux) PreFilterExtensions() framework.PreFilterExtensions {
+	klog.Info("PreFilterExtension ")
 	return nil
 }
 
