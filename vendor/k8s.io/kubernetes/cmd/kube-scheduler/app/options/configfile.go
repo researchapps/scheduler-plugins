@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,7 +32,7 @@ import (
 )
 
 func loadConfigFromFile(file string) (*config.KubeSchedulerConfiguration, error) {
-	data, err := os.ReadFile(file)
+	data, err := ioutil.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +82,7 @@ func encodeConfig(cfg *config.KubeSchedulerConfiguration) (*bytes.Buffer, error)
 
 // LogOrWriteConfig logs the completed component config and writes it into the given file name as YAML, if either is enabled
 func LogOrWriteConfig(fileName string, cfg *config.KubeSchedulerConfiguration, completedProfiles []config.KubeSchedulerProfile) error {
-	klogV := klog.V(2)
-	if !klogV.Enabled() && len(fileName) == 0 {
+	if !(klog.V(2).Enabled() || len(fileName) > 0) {
 		return nil
 	}
 	cfg.Profiles = completedProfiles
@@ -92,8 +92,8 @@ func LogOrWriteConfig(fileName string, cfg *config.KubeSchedulerConfiguration, c
 		return err
 	}
 
-	if klogV.Enabled() {
-		klogV.InfoS("Using component config", "config", buf.String())
+	if klog.V(2).Enabled() {
+		klog.Info("Using component config", "\n-------------------------Configuration File Contents Start Here---------------------- \n", buf.String(), "\n------------------------------------Configuration File Contents End Here---------------------------------\n")
 	}
 
 	if len(fileName) > 0 {

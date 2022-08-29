@@ -320,10 +320,10 @@ func (pl *PreemptionToleration) calculateNumCandidates(numNodes int32) int32 {
 // considered for preemption.
 // We look at the node that is nominated for this pod and as long as there are
 // terminating pods on the node, we don't consider this for preempting more pods.
-func (pl *PreemptionToleration) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) (bool, string) {
+func (pl *PreemptionToleration) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) bool {
 	if pod.Spec.PreemptionPolicy != nil && *pod.Spec.PreemptionPolicy == v1.PreemptNever {
 		klog.V(5).InfoS("Pod is not eligible for preemption because it has a preemptionPolicy of Never", "pod", klog.KObj(pod))
-		return false, fmt.Sprint("not eligible due to preemptionPolicy=Never.")
+		return false
 	}
 	nodeInfos := pl.fh.SnapshotSharedLister().NodeInfos()
 	nomNodeName := pod.Status.NominatedNodeName
@@ -331,19 +331,20 @@ func (pl *PreemptionToleration) PodEligibleToPreemptOthers(pod *v1.Pod, nominate
 		// If the pod's nominated node is considered as UnschedulableAndUnresolvable by the filters,
 		// then the pod should be considered for preempting again.
 		if nominatedNodeStatus.Code() == framework.UnschedulableAndUnresolvable {
-			return true, ""
+			return true
 		}
 
 		if nodeInfo, _ := nodeInfos.Get(nomNodeName); nodeInfo != nil {
 			podPriority := corev1helpers.PodPriority(pod)
 			for _, p := range nodeInfo.Pods {
 				if p.Pod.DeletionTimestamp != nil && corev1helpers.PodPriority(p.Pod) < podPriority {
-					return false, fmt.Sprint("not eligible due to a terminating pod on the nominated node.")
+					// There is a terminating pod on the nominated node.
+					return false
 				}
 			}
 		}
 	}
-	return true, ""
+	return true
 }
 
 // filterPodsWithPDBViolation groups the given "pods" into two groups of "violatingPods"

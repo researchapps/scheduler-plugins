@@ -28,7 +28,6 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/apis/config/validation"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/parallelize"
-	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 )
 
@@ -54,15 +53,14 @@ var systemDefaultConstraints = []v1.TopologySpreadConstraint{
 
 // PodTopologySpread is a plugin that ensures pod's topologySpreadConstraints is satisfied.
 type PodTopologySpread struct {
-	systemDefaulted                     bool
-	parallelizer                        parallelize.Parallelizer
-	defaultConstraints                  []v1.TopologySpreadConstraint
-	sharedLister                        framework.SharedLister
-	services                            corelisters.ServiceLister
-	replicationCtrls                    corelisters.ReplicationControllerLister
-	replicaSets                         appslisters.ReplicaSetLister
-	statefulSets                        appslisters.StatefulSetLister
-	enableMinDomainsInPodTopologySpread bool
+	systemDefaulted    bool
+	parallelizer       parallelize.Parallelizer
+	defaultConstraints []v1.TopologySpreadConstraint
+	sharedLister       framework.SharedLister
+	services           corelisters.ServiceLister
+	replicationCtrls   corelisters.ReplicationControllerLister
+	replicaSets        appslisters.ReplicaSetLister
+	statefulSets       appslisters.StatefulSetLister
 }
 
 var _ framework.PreFilterPlugin = &PodTopologySpread{}
@@ -82,7 +80,7 @@ func (pl *PodTopologySpread) Name() string {
 }
 
 // New initializes a new plugin and returns it.
-func New(plArgs runtime.Object, h framework.Handle, fts feature.Features) (framework.Plugin, error) {
+func New(plArgs runtime.Object, h framework.Handle) (framework.Plugin, error) {
 	if h.SnapshotSharedLister() == nil {
 		return nil, fmt.Errorf("SnapshotSharedlister is nil")
 	}
@@ -94,10 +92,9 @@ func New(plArgs runtime.Object, h framework.Handle, fts feature.Features) (frame
 		return nil, err
 	}
 	pl := &PodTopologySpread{
-		parallelizer:                        h.Parallelizer(),
-		sharedLister:                        h.SnapshotSharedLister(),
-		defaultConstraints:                  args.DefaultConstraints,
-		enableMinDomainsInPodTopologySpread: fts.EnableMinDomainsInPodTopologySpread,
+		parallelizer:       h.Parallelizer(),
+		sharedLister:       h.SnapshotSharedLister(),
+		defaultConstraints: args.DefaultConstraints,
 	}
 	if args.DefaultingType == config.SystemDefaulting {
 		pl.defaultConstraints = systemDefaultConstraints
