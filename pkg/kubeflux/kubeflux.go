@@ -45,7 +45,7 @@ type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
 	podNameToJobId map[string]uint64
-	pgMgr          *core.PodGroupManager
+	pgMgr          core.Manager
 }
 
 var _ framework.PreFilterPlugin = &KubeFlux{}
@@ -93,9 +93,8 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	podInformer := informerFactory.Core().V1().Pods()
 
 	scheduleTimeDuration := time.Duration(500) * time.Second
-	deniedPGExpirationTime := time.Duration(500) * time.Second
 
-	pgMgr := core.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, &deniedPGExpirationTime, podGroupInformer, podInformer)
+	pgMgr := core.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, podGroupInformer, podInformer)
 	kf.pgMgr = pgMgr
 
 
