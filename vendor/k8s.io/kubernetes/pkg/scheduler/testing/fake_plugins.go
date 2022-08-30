@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	frameworkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
@@ -127,19 +127,17 @@ func NewMatchFilterPlugin(_ runtime.Object, _ framework.Handle) (framework.Plugi
 
 // FakePreFilterPlugin is a test filter plugin.
 type FakePreFilterPlugin struct {
-	Result *framework.PreFilterResult
 	Status *framework.Status
-	name   string
 }
 
 // Name returns name of the plugin.
 func (pl *FakePreFilterPlugin) Name() string {
-	return pl.name
+	return "FakePreFilter"
 }
 
 // PreFilter invoked at the PreFilter extension point.
-func (pl *FakePreFilterPlugin) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
-	return pl.Result, pl.Status
+func (pl *FakePreFilterPlugin) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) *framework.Status {
+	return pl.Status
 }
 
 // PreFilterExtensions no extensions implemented by this plugin.
@@ -148,12 +146,10 @@ func (pl *FakePreFilterPlugin) PreFilterExtensions() framework.PreFilterExtensio
 }
 
 // NewFakePreFilterPlugin initializes a fakePreFilterPlugin and returns it.
-func NewFakePreFilterPlugin(name string, result *framework.PreFilterResult, status *framework.Status) frameworkruntime.PluginFactory {
+func NewFakePreFilterPlugin(status *framework.Status) frameworkruntime.PluginFactory {
 	return func(_ runtime.Object, _ framework.Handle) (framework.Plugin, error) {
 		return &FakePreFilterPlugin{
-			Result: result,
 			Status: status,
-			name:   name,
 		}, nil
 	}
 }

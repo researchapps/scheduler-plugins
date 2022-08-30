@@ -45,7 +45,7 @@ type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
 	podNameToJobId map[string]uint64
-	pgMgr          *core.PodGroupManager
+	pgMgr          core.Manager
 }
 
 var _ framework.PreFilterPlugin = &KubeFlux{}
@@ -115,7 +115,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	return kf, nil
 }
 
-func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
+func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
 	klog.Infof("Examining the pod")
 	var err error
 	var nodename string
@@ -130,25 +130,25 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 			// 	return framework.NewStatus(framework.Unschedulable, err.Error())
 			// }
 			if _, err = kf.AskFlux(pod, groupSize); err != nil {
-				return nil, framework.NewStatus(framework.Unschedulable, err.Error())
+				return framework.NewStatus(framework.Unschedulable, err.Error())
 			}
 			// klog.Infof("Group size %d: ", nodename, groupSize)
 		}
 		nodename, err = kfcore.GetNextNode(pgname)
 		klog.Infof("Node Selected %s (%s:%s)", nodename, pod.Name, pgname)
 		if err != nil {
-			return nil, framework.NewStatus(framework.Unschedulable, err.Error())
+			return framework.NewStatus(framework.Unschedulable, err.Error())
 		}
 	} else {
 		nodename, err = kf.AskFlux(pod, 1)
 		if err != nil {
-			return nil, framework.NewStatus(framework.Unschedulable, err.Error())
+			return framework.NewStatus(framework.Unschedulable, err.Error())
 		}
 	}
 
 	klog.Info("Node Selected: ", nodename)
 	state.Write(framework.StateKey(pod.Name), &kfcore.FluxStateData{NodeName: nodename})
-	return nil, framework.NewStatus(framework.Success, "")
+	return framework.NewStatus(framework.Success, "")
 
 	// if nodenames == nil {
 	// 	klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodenames)

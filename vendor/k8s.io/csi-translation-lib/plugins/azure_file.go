@@ -58,7 +58,7 @@ func NewAzureFileCSITranslator() InTreePlugin {
 	return &azureFileCSITranslator{}
 }
 
-// TranslateInTreeStorageClassToCSI translates InTree Azure File storage class parameters to CSI storage class
+// TranslateInTreeStorageClassParametersToCSI translates InTree Azure File storage class parameters to CSI storage class
 func (t *azureFileCSITranslator) TranslateInTreeStorageClassToCSI(sc *storage.StorageClass) (*storage.StorageClass, error) {
 	return sc, nil
 }
