@@ -6,7 +6,7 @@
 scheduler:
   name: kubeflux
   # image: k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.23.10
-  image: quay.io/cmisale1/kubeflux:dev
+  image: quay.io/cmisale1/kubeflux:upstream
   namespace: scheduler-plugins
   replicaCount: 1
   leaderElect: false
