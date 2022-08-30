@@ -38,12 +38,20 @@ spec:
       labels:
         component: scheduler
     spec:
-      serviceAccountName: scheduler-plugins-scheduler
+      serviceAccountName: {{ .Values.scheduler.name }}
       containers:
+      - image: {{ .Values.scheduler.sidecarimage }}
+        imagePullPolicy: Always
+        command:
+        - /go/src/kubeflux/bin/server
+        - --policy={{ .Values.scheduler.policy }}
+        name: sidecar
       - command:
         - /bin/kube-scheduler
         - --config=/etc/kubernetes/scheduler-config.yaml
+        - -v=9
         image: {{ .Values.scheduler.image }}
+        imagePullPolicy: Always
         livenessProbe:
           httpGet:
             path: /healthz

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kubeflux
-  namespace: default
+  namespace: scheduler-plugins
 spec:
   replicas: 1
   selector:
@@ -13,30 +13,33 @@ spec:
       labels:
         component: scheduler
     spec:
-      serviceAccountName: kubeflux
+      serviceAccountName: scheduler-plugins
       containers:
-        - image: quay.io/cmisale1/kubeflux-sidecar:dev
+        - image: quay.io/cmisale1/kubeflux-sidecar:latest
           imagePullPolicy: Always
           command:
           - /go/src/kubeflux/bin/server
           - --policy=lonode
           name: kubeflux-sidecar
-        - image: quay.io/cmisale1/kubeflux:upstream
+        - image: quay.io/cmisale1/kubeflux:dev
           imagePullPolicy: Always
           command:
           - /bin/kube-scheduler
-          - --leader-elect=false
           - --config=/etc/kubernetes/scheduler-config.yaml
           - -v=9
           name: kubeflux
+          resources:
+            requests:
+              cpu: '0.1'
+          securityContext:
+            privileged: false
           volumeMounts:
           - mountPath: /etc/kubernetes
             name: scheduler-config
-          securityContext:
-            privileged: false
       hostNetwork: false
       hostPID: false
       volumes:
-      - configMap:
+      - name: scheduler-config
+        configMap:
           name: scheduler-config
-        name: scheduler-config
+        
