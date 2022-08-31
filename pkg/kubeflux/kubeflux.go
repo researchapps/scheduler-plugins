@@ -33,7 +33,9 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
-	"sigs.k8s.io/scheduler-plugins/pkg/coscheduling/core"
+	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
+
+	coschedulingcore "sigs.k8s.io/scheduler-plugins/pkg/coscheduling/core"
 	pgclientset "sigs.k8s.io/scheduler-plugins/pkg/generated/clientset/versioned"
 	schedinformer "sigs.k8s.io/scheduler-plugins/pkg/generated/informers/externalversions"
 	kfcore "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/core"
@@ -45,9 +47,10 @@ type KubeFlux struct {
 	mutex          sync.Mutex
 	handle         framework.Handle
 	podNameToJobId map[string]uint64
-	pgMgr          core.Manager
+	pgMgr          coschedulingcore.Manager
 }
 
+var _ framework.QueueSortPlugin = &KubeFlux{}
 var _ framework.PreFilterPlugin = &KubeFlux{}
 var _ framework.FilterPlugin = &KubeFlux{}
 
@@ -94,7 +97,7 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 
 	scheduleTimeDuration := time.Duration(500) * time.Second
 
-	pgMgr := core.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, podGroupInformer, podInformer)
+	pgMgr := coschedulingcore.NewPodGroupManager(pgclient, handle.SnapshotSharedLister(), &scheduleTimeDuration, podGroupInformer, podInformer)
 	kf.pgMgr = pgMgr
 
 
@@ -114,6 +117,27 @@ func New(_ runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	klog.Info("kubeflux starts")
 	return kf, nil
 }
+
+
+// Less is used to sort pods in the scheduling queue in the following order.
+// 1. Compare the priorities of Pods.
+// 2. Compare the initialization timestamps of PodGroups or Pods.
+// 3. Compare the keys of PodGroups/Pods: <namespace>/<podname>.
+func (kf *KubeFlux) Less(podInfo1, podInfo2 *framework.QueuedPodInfo) bool {
+	klog.Infof("ordering pods from Coscheduling")
+	prio1 := corev1helpers.PodPriority(podInfo1.Pod)
+	prio2 := corev1helpers.PodPriority(podInfo2.Pod)
+	if prio1 != prio2 {
+		return prio1 > prio2
+	}
+	creationTime1 := kf.pgMgr.GetCreationTimestamp(podInfo1.Pod, podInfo1.InitialAttemptTimestamp)
+	creationTime2 := kf.pgMgr.GetCreationTimestamp(podInfo2.Pod, podInfo2.InitialAttemptTimestamp)
+	if creationTime1.Equal(creationTime2) {
+		return coschedulingcore.GetNamespacedName(podInfo1.Pod) < coschedulingcore.GetNamespacedName(podInfo2.Pod)
+	}
+	return creationTime1.Before(creationTime2)
+}
+
 
 func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
 	klog.Infof("Examining the pod")
