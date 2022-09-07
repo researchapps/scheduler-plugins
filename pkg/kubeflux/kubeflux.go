@@ -144,19 +144,12 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 	var err error
 	var nodename string
 	if pgname, ok := kf.isGroup(pod); ok {
-		// klog.Infof("GROUP (%s:%s)", pod.Name, pgname)
 		if !kfcore.HaveList(pgname) {
 			klog.Infof("Getting a pod group")
 			groupSize, _ := kf.groupPreFilter(ctx, pod)
-			// if err != nil {
-			// 	klog.ErrorS(err, "Group not completed yet", "pod", klog.KObj(pod))
-			// 	state.Write(framework.StateKey("Prefilter-Coscheduling"), utils.NewNoopStateData())
-			// 	return framework.NewStatus(framework.Unschedulable, err.Error())
-			// }
 			if _, err = kf.AskFlux(pod, groupSize); err != nil {
 				return framework.NewStatus(framework.Unschedulable, err.Error())
 			}
-			// klog.Infof("Group size %d: ", nodename, groupSize)
 		}
 		nodename, err = kfcore.GetNextNode(pgname)
 		klog.Infof("Node Selected %s (%s:%s)", nodename, pod.Name, pgname)
@@ -174,15 +167,10 @@ func (kf *KubeFlux) PreFilter(ctx context.Context, state *framework.CycleState, 
 	state.Write(framework.StateKey(pod.Name), &kfcore.FluxStateData{NodeName: nodename})
 	return framework.NewStatus(framework.Success, "")
 
-	// if nodenames == nil {
-	// 	klog.Warning("Pod cannot be scheduled by KubeFlux, nodename ", nodenames)
-	// 	return framework.NewStatus(framework.Unschedulable, "Pod cannot be scheduled by KubeFlux")
-	// }
 }
 
 func (kf *KubeFlux) isGroup(pod *v1.Pod) (string, bool) {
 	pgFullName, pg := kf.pgMgr.GetPodGroup(pod)
-
 	if pg == nil {
 		klog.InfoS("Not in group", "pod", klog.KObj(pod))
 		return "", false
@@ -198,23 +186,9 @@ func (kf *KubeFlux) groupPreFilter(ctx context.Context, pod *v1.Pod) (int, error
 		klog.InfoS("Not in group", "pod", klog.KObj(pod))
 		return 0, nil
 	}
-	// if _, ok := kf.pgMgr.LastDeniedPG.Get(pgFullName); ok {
-	// 	return 0, fmt.Errorf("pod with pgName: %v last failed in 3s, deny", pgFullName)
-	// }
-	// pods, err := kf.pgMgr.PodLister.Pods(pod.Namespace).List(
-	// 	labels.SelectorFromSet(labels.Set{util.PodGroupLabel: util.GetPodGroupLabel(pod)}),
-	// )
 
-	// if err != nil {
-	// 	return 0, fmt.Errorf("podLister list pods failed: %v", err)
-	// }
-	// klog.Info("Min pod group ", int(pg.Spec.MinMember), " pods avail ", len(pods))
-	// if len(pods) < int(pg.Spec.MinMember) {
-	// 	return 0, fmt.Errorf("pre-filter pod %v cannot find enough sibling pods, "+
-	// 		"current pods number: %v, minMember of group: %v", pod.Name, len(pods), pg.Spec.MinMember)
-	// }
 	klog.Info("pod group members ", pg.Spec.MinMember)
-	return int(pg.Spec.MinMember) /*len(pods)*/, nil
+	return int(pg.Spec.MinMember), nil
 }
 
 func (kf *KubeFlux) Filter(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
@@ -306,16 +280,9 @@ func (kf *KubeFlux) cancelFluxJobForPod(podName string) error {
 	klog.Infof("Cancel flux job: %v for pod %s", jobid, podName)
 
 	start := time.Now()
-	//err := fluxcli.ReapiCliCancel(kf.fluxctx, int64(jobid), false)
 
 	conn, err := grpc.Dial("127.0.0.1:4242", grpc.WithInsecure())
-	// or with sockets
-	// conn, err := grpc.Dial(
-	// 	sock,
-	// 	grpc.WithInsecure(),
-	// 	grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-	// 		return net.DialTimeout("unix", addr, timeout)
-	// 	}))
+
 	if err != nil {
 		klog.Errorf("[FluxClient] Error connecting to server: %v", err)
 		return err

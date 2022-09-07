@@ -84,14 +84,10 @@ func GetNextNode(pgname string) (string, error) {
 	}
 
 	nodename := entry[0].NodeName
-	klog.Info("Analyzing entry ", entry)
 
 	if entry[0].Count == 1 {
-		klog.Info("Entry ", entry, " has count 1")
 		slice := entry[1:]
-		klog.Info("New slice ", slice)
 		if len(slice) == 0 {
-			klog.Info("Deleting entire group ", pgname)
 			delete(podgroupMap, pgname)
 			return nodename, nil
 		}
