@@ -4,13 +4,13 @@
 # Declare variables to be passed into your templates.
 
 scheduler:
-  name: kubeflux
+  name: fluence
   # image: k8s.gcr.io/scheduler-plugins/kube-scheduler:v0.23.10
-  image: quay.io/cmisale1/kubeflux:upstream
+  image: quay.io/cmisale1/fluence:upstream
   namespace: scheduler-plugins
   replicaCount: 1
   leaderElect: false
-  sidecarimage: quay.io/cmisale1/kubeflux-sidecar:latest
+  sidecarimage: quay.io/cmisale1/fluence-sidecar:latest
   policy: lonode
 
 controller:
@@ -23,6 +23,6 @@ controller:
 # as they need extra RBAC privileges on metrics.k8s.io.
 
 plugins:
-  enabled: ["KubeFlux"]
+  enabled: ["Fluence"]
   disabled: ["CapacityScheduling","NodeResourceTopologyMatch","NodeResourcesAllocatable","PrioritySort","Coscheduling"] # only in-tree plugins need to be defined here
 

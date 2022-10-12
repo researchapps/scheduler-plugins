@@ -22,7 +22,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
-	pb "sigs.k8s.io/scheduler-plugins/pkg/kubeflux/fluxcli-grpc"
+	pb "sigs.k8s.io/scheduler-plugins/pkg/fluence/fluxcli-grpc"
 )
 
 type NoopStateData struct{}

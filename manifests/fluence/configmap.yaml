@@ -10,14 +10,14 @@ data:
     leaderElection:
       leaderElect: false
     profiles:
-    - schedulerName: kubeflux
+    - schedulerName: fluence
       plugins:
         preFilter:
           enabled:
-          - name: KubeFlux
+          - name: Fluence
         filter:
           enabled:
-          - name: KubeFlux
+          - name: Fluence
         score:
           disabled:
           - name: '*'

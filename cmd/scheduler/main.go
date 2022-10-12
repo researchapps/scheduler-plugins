@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/scheduler-plugins/pkg/qos"
 	"sigs.k8s.io/scheduler-plugins/pkg/trimaran/loadvariationriskbalancing"
 	"sigs.k8s.io/scheduler-plugins/pkg/trimaran/targetloadpacking"
-	"sigs.k8s.io/scheduler-plugins/pkg/kubeflux"
+	"sigs.k8s.io/scheduler-plugins/pkg/fluence"
 	// Ensure scheme package is initialized.
 	_ "sigs.k8s.io/scheduler-plugins/apis/config/scheme"
 )
@@ -52,7 +52,7 @@ func main() {
 		// app.WithPlugin(crossnodepreemption.Name, crossnodepreemption.New),
 		app.WithPlugin(podstate.Name, podstate.New),
 		app.WithPlugin(qos.Name, qos.New),
-		app.WithPlugin(kubeflux.Name, kubeflux.New),
+		app.WithPlugin(fluence.Name, fluence.New),
 	)
 
 	code := cli.Run(command)

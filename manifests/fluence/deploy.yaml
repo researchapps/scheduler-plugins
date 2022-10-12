@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: kubeflux
+  name: fluence
   namespace: scheduler-plugins
 spec:
   replicas: 1
@@ -15,19 +15,19 @@ spec:
     spec:
       serviceAccountName: scheduler-plugins
       containers:
-        - image: quay.io/cmisale1/kubeflux-sidecar:latest
+        - image: quay.io/cmisale1/fluence-sidecar:latest
           imagePullPolicy: Always
           command:
-          - /go/src/kubeflux/bin/server
+          - /go/src/fluence/bin/server
           - --policy=lonode
-          name: kubeflux-sidecar
-        - image: quay.io/cmisale1/kubeflux:dev
+          name: fluence-sidecar
+        - image: quay.io/cmisale1/fluence:dev
           imagePullPolicy: Always
           command:
           - /bin/kube-scheduler
           - --config=/etc/kubernetes/scheduler-config.yaml
           - -v=9
-          name: kubeflux
+          name: fluence
           resources:
             requests:
               cpu: '0.1'

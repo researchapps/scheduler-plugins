@@ -43,7 +43,7 @@ spec:
       - image: {{ .Values.scheduler.sidecarimage }}
         imagePullPolicy: Always
         command:
-        - /go/src/kubeflux/bin/server
+        - /go/src/fluence/bin/server
         - --policy={{ .Values.scheduler.policy }}
         name: sidecar
       - command:

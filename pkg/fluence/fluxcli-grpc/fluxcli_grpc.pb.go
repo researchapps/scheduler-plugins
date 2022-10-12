@@ -135,5 +135,5 @@ var FluxcliService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "kubeflux/fluxcli-grpc/fluxcli.proto",
+	Metadata: "fluence/fluxcli-grpc/fluxcli.proto",
 }
