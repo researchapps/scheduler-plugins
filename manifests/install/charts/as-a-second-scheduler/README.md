@@ -10,6 +10,16 @@ Quick start instructions for the setup and configuration of as-a-second-schedule
 
 ### Installing the chart
 
+#### Fluence specific values
+
+In `values.yaml` it is possible to customize the container image, already defaulted to the latest release, and the allocation policy
+used by the scheduler.
+Most common options are:
+
+- `lonode`: choose the nodes with lower ID first. Can be compared to packing
+- `low`: choose cores with lowest IDs from multiple nodes. Can be compared to spread process-to-resource placement
+
+
 #### Install chart using Helm v3.0+
 
 ```bash
