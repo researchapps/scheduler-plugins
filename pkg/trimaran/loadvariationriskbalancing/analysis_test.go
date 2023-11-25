@@ -21,54 +21,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/paypal/load-watcher/pkg/watcher"
 	"github.com/stretchr/testify/assert"
-
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/kubernetes/pkg/scheduler/framework"
-	st "k8s.io/kubernetes/pkg/scheduler/testing"
-)
-
-var (
-	metrics = []watcher.Metric{
-		{
-			Name:     "no_name",
-			Type:     watcher.CPU,
-			Operator: "",
-			Value:    40,
-		},
-		{
-			Name:     "cpu_running_avg",
-			Type:     watcher.CPU,
-			Operator: watcher.Average,
-			Value:    40,
-		},
-		{
-			Name:     "cpu_running_std",
-			Type:     watcher.CPU,
-			Operator: watcher.Std,
-			Value:    36,
-		},
-		{
-			Name:     "mem_running_avg",
-			Type:     watcher.Memory,
-			Operator: watcher.Average,
-			Value:    20,
-		},
-		{
-			Name:     "mem_running_std",
-			Type:     watcher.Memory,
-			Operator: watcher.Std,
-			Value:    10,
-		},
-	}
-
-	nodeResources = map[v1.ResourceName]string{
-		v1.ResourceCPU:    "1000m",
-		v1.ResourceMemory: "1Gi",
-	}
-
-	node0 = st.MakeNode().Name("node0").Capacity(nodeResources).Obj()
+	"sigs.k8s.io/scheduler-plugins/pkg/trimaran"
 )
 
 func TestComputeScore(t *testing.T) {

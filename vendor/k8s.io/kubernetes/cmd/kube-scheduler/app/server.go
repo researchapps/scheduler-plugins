@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	genericapifilters "k8s.io/apiserver/pkg/endpoints/filters"
@@ -36,6 +37,7 @@ import (
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/apiserver/pkg/server/mux"
 	"k8s.io/apiserver/pkg/server/routes"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
@@ -44,7 +46,10 @@ import (
 	"k8s.io/component-base/cli/globalflag"
 	"k8s.io/component-base/configz"
 	"k8s.io/component-base/logs"
+	logsapi "k8s.io/component-base/logs/api/v1"
+	"k8s.io/component-base/metrics/features"
 	"k8s.io/component-base/metrics/legacyregistry"
+	"k8s.io/component-base/metrics/prometheus/slis"
 	"k8s.io/component-base/term"
 	"k8s.io/component-base/version"
 	"k8s.io/component-base/version/verflag"
@@ -58,6 +63,11 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/metrics/resources"
 	"k8s.io/kubernetes/pkg/scheduler/profile"
 )
+
+func init() {
+	utilruntime.Must(logsapi.AddFeatureGates(utilfeature.DefaultMutableFeatureGate))
+	utilruntime.Must(features.AddFeatureGates(utilfeature.DefaultMutableFeatureGate))
+}
 
 // Option configures a framework.Registry.
 type Option func(runtime.Registry) error
@@ -100,7 +110,9 @@ for more information about scheduling and the kube-scheduler component.`,
 	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
 	cliflag.SetUsageAndHelpFunc(cmd, *nfs, cols)
 
-	cmd.MarkFlagFilename("config", "yaml", "yml", "json")
+	if err := cmd.MarkFlagFilename("config", "yaml", "yml", "json"); err != nil {
+		klog.Background().Error(err, "Failed to mark flag filename")
+	}
 
 	return cmd
 }
@@ -111,7 +123,7 @@ func runCommand(cmd *cobra.Command, opts *options.Options, registryOptions ...Op
 
 	// Activate logging as soon as possible, after that
 	// show flags with the final logging configuration.
-	if err := opts.Logs.ValidateAndApply(); err != nil {
+	if err := logsapi.ValidateAndApply(opts.Logs, utilfeature.DefaultFeatureGate); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
@@ -129,14 +141,19 @@ func runCommand(cmd *cobra.Command, opts *options.Options, registryOptions ...Op
 	if err != nil {
 		return err
 	}
-
+	// add feature enablement metrics
+	utilfeature.DefaultMutableFeatureGate.AddMetrics()
 	return Run(ctx, cc, sched)
 }
 
 // Run executes the scheduler based on the given configuration. It only returns on error or when context is done.
 func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *scheduler.Scheduler) error {
+	logger := klog.FromContext(ctx)
+
 	// To help debugging, immediately log version
-	klog.InfoS("Starting Kubernetes Scheduler", "version", version.Get())
+	logger.Info("Starting Kubernetes Scheduler", "version", version.Get())
+
+	logger.Info("Golang settings", "GOGC", os.Getenv("GOGC"), "GOMAXPROCS", os.Getenv("GOMAXPROCS"), "GOTRACEBACK", os.Getenv("GOTRACEBACK"))
 
 	// Configz registration.
 	if cz, err := configz.New("componentconfig"); err == nil {
@@ -145,8 +162,9 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 		return fmt.Errorf("unable to register configz: %s", err)
 	}
 
-	// Prepare the event broadcaster.
+	// Start events processing pipeline.
 	cc.EventBroadcaster.StartRecordingToSink(ctx.Done())
+	defer cc.EventBroadcaster.Shutdown()
 
 	// Setup healthz checks.
 	var checks []healthz.HealthChecker
@@ -169,8 +187,8 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 	// Start up the healthz server.
 	if cc.SecureServing != nil {
 		handler := buildHandlerChain(newHealthzAndMetricsHandler(&cc.ComponentConfig, cc.InformerFactory, isLeader, checks...), cc.Authentication.Authenticator, cc.Authorization.Authorizer)
-		// TODO: handle stoppedCh returned by c.SecureServing.Serve
-		if _, err := cc.SecureServing.Serve(handler, 0, ctx.Done()); err != nil {
+		// TODO: handle stoppedCh and listenerStoppedCh returned by c.SecureServing.Serve
+		if _, _, err := cc.SecureServing.Serve(handler, 0, ctx.Done()); err != nil {
 			// fail early for secure handlers, removing the old error loop from above
 			return fmt.Errorf("failed to start secure server: %v", err)
 		}
@@ -201,12 +219,12 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
 				select {
 				case <-ctx.Done():
 					// We were asked to terminate. Exit 0.
-					klog.InfoS("Requested to terminate, exiting")
+					logger.Info("Requested to terminate, exiting")
 					os.Exit(0)
 				default:
 					// We lost the lock.
-					klog.ErrorS(nil, "Leaderelection lost")
-					os.Exit(1)
+					logger.Error(nil, "Leaderelection lost")
+					klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 				}
 			},
 		}
@@ -232,7 +250,7 @@ func buildHandlerChain(handler http.Handler, authn authenticator.Request, authz 
 	failedHandler := genericapifilters.Unauthorized(scheme.Codecs)
 
 	handler = genericapifilters.WithAuthorization(handler, authz, scheme.Codecs)
-	handler = genericapifilters.WithAuthentication(handler, authn, failedHandler, nil)
+	handler = genericapifilters.WithAuthentication(handler, authn, failedHandler, nil, nil)
 	handler = genericapifilters.WithRequestInfo(handler, requestInfoResolver)
 	handler = genericapifilters.WithCacheControl(handler)
 	handler = genericfilters.WithHTTPLogging(handler)
@@ -260,6 +278,9 @@ func newHealthzAndMetricsHandler(config *kubeschedulerconfig.KubeSchedulerConfig
 	pathRecorderMux := mux.NewPathRecorderMux("kube-scheduler")
 	healthz.InstallHandler(pathRecorderMux, checks...)
 	installMetricHandler(pathRecorderMux, informers, isLeader)
+	if utilfeature.DefaultFeatureGate.Enabled(features.ComponentSLIs) {
+		slis.SLIMetricsWithReset{}.Install(pathRecorderMux)
+	}
 	if config.EnableProfiling {
 		routes.Profiling{}.Install(pathRecorderMux)
 		if config.EnableContentionProfiling {
@@ -296,7 +317,7 @@ func Setup(ctx context.Context, opts *options.Options, outOfTreeRegistryOptions 
 		return nil, nil, utilerrors.NewAggregate(errs)
 	}
 
-	c, err := opts.Config()
+	c, err := opts.Config(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -326,6 +347,7 @@ func Setup(ctx context.Context, opts *options.Options, outOfTreeRegistryOptions 
 		scheduler.WithFrameworkOutOfTreeRegistry(outOfTreeRegistry),
 		scheduler.WithPodMaxBackoffSeconds(cc.ComponentConfig.PodMaxBackoffSeconds),
 		scheduler.WithPodInitialBackoffSeconds(cc.ComponentConfig.PodInitialBackoffSeconds),
+		scheduler.WithPodMaxInUnschedulablePodsDuration(cc.PodMaxInUnschedulablePodsDuration),
 		scheduler.WithExtenders(cc.ComponentConfig.Extenders...),
 		scheduler.WithParallelism(cc.ComponentConfig.Parallelism),
 		scheduler.WithBuildFrameworkCapturer(func(profile kubeschedulerconfig.KubeSchedulerProfile) {
@@ -336,7 +358,7 @@ func Setup(ctx context.Context, opts *options.Options, outOfTreeRegistryOptions 
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := options.LogOrWriteConfig(opts.WriteConfigTo, &cc.ComponentConfig, completedProfiles); err != nil {
+	if err := options.LogOrWriteConfig(klog.FromContext(ctx), opts.WriteConfigTo, &cc.ComponentConfig, completedProfiles); err != nil {
 		return nil, nil, err
 	}
 

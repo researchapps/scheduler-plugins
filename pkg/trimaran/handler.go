@@ -65,7 +65,31 @@ func New() *PodAssignEventHandler {
 	return &p
 }
 
-func (p *PodAssignEventHandler) OnAdd(obj interface{}) {
+// AddToHandle : add event handler to framework handle
+func (p *PodAssignEventHandler) AddToHandle(handle framework.Handle) {
+	handle.SharedInformerFactory().Core().V1().Pods().Informer().AddEventHandler(
+		clientcache.FilteringResourceEventHandler{
+			FilterFunc: func(obj interface{}) bool {
+				switch t := obj.(type) {
+				case *v1.Pod:
+					return isAssigned(t)
+				case clientcache.DeletedFinalStateUnknown:
+					if pod, ok := t.Obj.(*v1.Pod); ok {
+						return isAssigned(pod)
+					}
+					utilruntime.HandleError(fmt.Errorf("unable to convert object %T to *v1.Pod", obj))
+					return false
+				default:
+					utilruntime.HandleError(fmt.Errorf("unable to handle object: %T", obj))
+					return false
+				}
+			},
+			Handler: p,
+		},
+	)
+}
+
+func (p *PodAssignEventHandler) OnAdd(obj interface{}, _ bool) {
 	pod := obj.(*v1.Pod)
 	p.updateCache(pod)
 }
@@ -97,7 +121,6 @@ func (p *PodAssignEventHandler) OnDelete(obj interface{}) {
 			break
 		}
 	}
-
 }
 
 func (p *PodAssignEventHandler) updateCache(pod *v1.Pod) {

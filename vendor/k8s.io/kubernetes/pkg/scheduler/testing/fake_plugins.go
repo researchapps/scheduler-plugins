@@ -67,6 +67,16 @@ func NewTrueFilterPlugin(_ runtime.Object, _ framework.Handle) (framework.Plugin
 	return &TrueFilterPlugin{}, nil
 }
 
+type FakePreFilterAndFilterPlugin struct {
+	*FakePreFilterPlugin
+	*FakeFilterPlugin
+}
+
+// Name returns name of the plugin.
+func (pl FakePreFilterAndFilterPlugin) Name() string {
+	return "FakePreFilterAndFilterPlugin"
+}
+
 // FakeFilterPlugin is a test filter plugin to record how many times its Filter() function have
 // been called, and it returns different 'Code' depending on its internal 'failedNodeReturnCodeMap'.
 type FakeFilterPlugin struct {
@@ -127,17 +137,19 @@ func NewMatchFilterPlugin(_ runtime.Object, _ framework.Handle) (framework.Plugi
 
 // FakePreFilterPlugin is a test filter plugin.
 type FakePreFilterPlugin struct {
+	Result *framework.PreFilterResult
 	Status *framework.Status
+	name   string
 }
 
 // Name returns name of the plugin.
 func (pl *FakePreFilterPlugin) Name() string {
-	return "FakePreFilter"
+	return pl.name
 }
 
 // PreFilter invoked at the PreFilter extension point.
-func (pl *FakePreFilterPlugin) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) *framework.Status {
-	return pl.Status
+func (pl *FakePreFilterPlugin) PreFilter(_ context.Context, _ *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
+	return pl.Result, pl.Status
 }
 
 // PreFilterExtensions no extensions implemented by this plugin.
@@ -146,10 +158,12 @@ func (pl *FakePreFilterPlugin) PreFilterExtensions() framework.PreFilterExtensio
 }
 
 // NewFakePreFilterPlugin initializes a fakePreFilterPlugin and returns it.
-func NewFakePreFilterPlugin(status *framework.Status) frameworkruntime.PluginFactory {
+func NewFakePreFilterPlugin(name string, result *framework.PreFilterResult, status *framework.Status) frameworkruntime.PluginFactory {
 	return func(_ runtime.Object, _ framework.Handle) (framework.Plugin, error) {
 		return &FakePreFilterPlugin{
+			Result: result,
 			Status: status,
+			name:   name,
 		}, nil
 	}
 }
@@ -228,6 +242,41 @@ func NewFakePermitPlugin(status *framework.Status, timeout time.Duration) framew
 		return &FakePermitPlugin{
 			Status:  status,
 			Timeout: timeout,
+		}, nil
+	}
+}
+
+type FakePreScoreAndScorePlugin struct {
+	name           string
+	score          int64
+	preScoreStatus *framework.Status
+	scoreStatus    *framework.Status
+}
+
+// Name returns name of the plugin.
+func (pl *FakePreScoreAndScorePlugin) Name() string {
+	return pl.name
+}
+
+func (pl *FakePreScoreAndScorePlugin) Score(ctx context.Context, state *framework.CycleState, p *v1.Pod, nodeName string) (int64, *framework.Status) {
+	return pl.score, pl.scoreStatus
+}
+
+func (pl *FakePreScoreAndScorePlugin) ScoreExtensions() framework.ScoreExtensions {
+	return nil
+}
+
+func (pl *FakePreScoreAndScorePlugin) PreScore(ctx context.Context, state *framework.CycleState, pod *v1.Pod, nodes []*v1.Node) *framework.Status {
+	return pl.preScoreStatus
+}
+
+func NewFakePreScoreAndScorePlugin(name string, score int64, preScoreStatus, scoreStatus *framework.Status) frameworkruntime.PluginFactory {
+	return func(_ runtime.Object, _ framework.Handle) (framework.Plugin, error) {
+		return &FakePreScoreAndScorePlugin{
+			name:           name,
+			score:          score,
+			preScoreStatus: preScoreStatus,
+			scoreStatus:    scoreStatus,
 		}, nil
 	}
 }

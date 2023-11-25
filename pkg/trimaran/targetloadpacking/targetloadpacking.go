@@ -68,6 +68,8 @@ type TargetLoadPacking struct {
 	mu sync.RWMutex
 }
 
+var _ framework.ScorePlugin = &TargetLoadPacking{}
+
 func New(obj runtime.Object, handle framework.Handle) (framework.Plugin, error) {
 	args, err := getArgs(obj)
 	if err != nil {

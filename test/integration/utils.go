@@ -38,10 +38,18 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/profile"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
 
+	agv1alpha1 "github.com/diktyo-io/appgroup-api/pkg/apis/appgroup/v1alpha1"
+	ntv1alpha1 "github.com/diktyo-io/networktopology-api/pkg/apis/networktopology/v1alpha1"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+
 	"sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 )
 
 var lowPriority, midPriority, highPriority = int32(0), int32(100), int32(1000)
+
+var signalHandler = ctrl.SetupSignalHandler()
 
 // podScheduled returns true if a node is assigned to the given pod.
 func podScheduled(c clientset.Interface, podNamespace, podName string) bool {
@@ -127,7 +135,6 @@ type eqWrapper struct{ *v1alpha1.ElasticQuota }
 
 func MakeEQ(namespace, name string) *eqWrapper {
 	eq := &v1alpha1.ElasticQuota{
-		TypeMeta: metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -191,8 +198,7 @@ func initTestSchedulerWithOptions(t *testing.T, testCtx *testContext, opts ...sc
 		t.Fatalf("Couldn't create scheduler: %v", err)
 	}
 
-	stopCh := make(chan struct{})
-	eventBroadcaster.StartRecordingToSink(stopCh)
+	eventBroadcaster.StartRecordingToSink(testCtx.Ctx.Done())
 
 	return testCtx
 }
@@ -252,4 +258,110 @@ func createNamespace(t *testing.T, testCtx *testContext, ns string) {
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("Failed to create integration test namespace %s: %v", ns, err)
 	}
+}
+
+func createAppGroups(ctx context.Context, client ctrlclient.Client, appGroups []*agv1alpha1.AppGroup) error {
+	for _, ag := range appGroups {
+		err := client.Create(ctx, ag.DeepCopy())
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func cleanupAppGroups(ctx context.Context, client ctrlclient.Client, appGroups []*agv1alpha1.AppGroup) {
+	for _, ag := range appGroups {
+		client.Delete(ctx, ag)
+	}
+}
+
+func createNetworkTopologies(ctx context.Context, client ctrlclient.Client, networkTopologies []*ntv1alpha1.NetworkTopology) error {
+	for _, nt := range networkTopologies {
+		err := client.Create(ctx, nt.DeepCopy())
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func cleanupNetworkTopologies(ctx context.Context, client ctrlclient.Client, networkTopologies []*ntv1alpha1.NetworkTopology) {
+	for _, nt := range networkTopologies {
+		client.Delete(ctx, nt)
+	}
+}
+
+// AppGroup wrapper
+type agWrapper struct{ *agv1alpha1.AppGroup }
+
+func MakeAppGroup(namespace, name string) *agWrapper {
+	ag := &agv1alpha1.AppGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	return &agWrapper{ag}
+}
+
+func (a *agWrapper) Name(name string) *agWrapper {
+	a.AppGroup.Name = name
+	return a
+}
+
+func (a *agWrapper) Namespace(namespace string) *agWrapper {
+	a.AppGroup.Namespace = namespace
+	return a
+}
+
+func (a *agWrapper) Spec(spec agv1alpha1.AppGroupSpec) *agWrapper {
+	a.AppGroup.Spec = spec
+	return a
+}
+
+func (a *agWrapper) Status(status agv1alpha1.AppGroupStatus) *agWrapper {
+	a.AppGroup.Status = status
+	return a
+}
+
+func (a *agWrapper) Obj() *agv1alpha1.AppGroup {
+	return a.AppGroup
+}
+
+// NetworkTopology wrapper
+type ntWrapper struct{ *ntv1alpha1.NetworkTopology }
+
+func MakeNetworkTopology(namespace, name string) *ntWrapper {
+	nt := &ntv1alpha1.NetworkTopology{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	return &ntWrapper{nt}
+}
+
+func (nt *ntWrapper) Name(name string) *ntWrapper {
+	nt.NetworkTopology.Name = name
+	return nt
+}
+
+func (nt *ntWrapper) Namespace(namespace string) *ntWrapper {
+	nt.NetworkTopology.Namespace = namespace
+	return nt
+}
+
+func (nt *ntWrapper) Spec(spec ntv1alpha1.NetworkTopologySpec) *ntWrapper {
+	nt.NetworkTopology.Spec = spec
+	return nt
+}
+
+func (nt *ntWrapper) Status(status ntv1alpha1.NetworkTopologyStatus) *ntWrapper {
+	nt.NetworkTopology.Status = status
+	return nt
+}
+
+func (nt *ntWrapper) Obj() *ntv1alpha1.NetworkTopology {
+	return nt.NetworkTopology
 }
