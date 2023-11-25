@@ -21,13 +21,16 @@ Package Trimaran provides common code for plugins developed for real load aware 
 package trimaran
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientcache "k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
 const (
@@ -158,4 +161,9 @@ func (p *PodAssignEventHandler) cleanupCache() {
 			p.ScheduledPodsCache[nodeName] = cache
 		}
 	}
+}
+
+// Checks and returns true if the pod is assigned to a node
+func isAssigned(pod *v1.Pod) bool {
+	return len(pod.Spec.NodeName) != 0
 }

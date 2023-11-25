@@ -204,7 +204,7 @@ func (c *CapacityScheduling) EventsToRegister() []framework.ClusterEvent {
 // PreFilter performs the following validations.
 // 1. Check if the (pod.request + eq.allocated) is less than eq.max.
 // 2. Check if the sum(eq's usage) > sum(eq's min).
-func (c *CapacityScheduling) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) *framework.Status {
+func (c *CapacityScheduling) PreFilter(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (*framework.PreFilterResult, *framework.Status) {
 	// TODO improve the efficiency of taking snapshot
 	// e.g. use a two-pointer data structure to only copy the updated EQs when necessary.
 	snapshotElasticQuota := c.snapshotElasticQuota()
@@ -219,7 +219,7 @@ func (c *CapacityScheduling) PreFilter(ctx context.Context, state *framework.Cyc
 			podReq: *podReq,
 		}
 		state.Write(preFilterStateKey, preFilterState)
-		return framework.NewStatus(framework.Success)
+		return nil, framework.NewStatus(framework.Success)
 	}
 
 	// nominatedPodsReqInEQWithPodReq is the sum of podReq and the requested resources of the Nominated Pods
@@ -233,7 +233,7 @@ func (c *CapacityScheduling) PreFilter(ctx context.Context, state *framework.Cyc
 
 	nodeList, err := c.fh.SnapshotSharedLister().NodeInfos().List()
 	if err != nil {
-		return framework.NewStatus(framework.Error, fmt.Sprintf("Error getting the nodelist: %v", err))
+		return nil, framework.NewStatus(framework.Error, fmt.Sprintf("Error getting the nodelist: %v", err))
 	}
 
 	for _, node := range nodeList {
@@ -270,14 +270,14 @@ func (c *CapacityScheduling) PreFilter(ctx context.Context, state *framework.Cyc
 	state.Write(preFilterStateKey, preFilterState)
 
 	if eq.usedOverMaxWith(nominatedPodsReqInEQWithPodReq) {
-		return framework.NewStatus(framework.Unschedulable, fmt.Sprintf("Pod %v/%v is rejected in PreFilter because ElasticQuota %v is more than Max", pod.Namespace, pod.Name, eq.Namespace))
+		return nil, framework.NewStatus(framework.Unschedulable, fmt.Sprintf("Pod %v/%v is rejected in PreFilter because ElasticQuota %v is more than Max", pod.Namespace, pod.Name, eq.Namespace))
 	}
 
 	if elasticQuotaInfos.aggregatedUsedOverMinWith(*nominatedPodsReqWithPodReq) {
-		return framework.NewStatus(framework.Unschedulable, fmt.Sprintf("Pod %v/%v is rejected in PreFilter because total ElasticQuota used is more than min", pod.Namespace, pod.Name))
+		return nil, framework.NewStatus(framework.Unschedulable, fmt.Sprintf("Pod %v/%v is rejected in PreFilter because total ElasticQuota used is more than min", pod.Namespace, pod.Name))
 	}
 
-	return framework.NewStatus(framework.Success, "")
+	return nil, framework.NewStatus(framework.Success, "")
 }
 
 // PreFilterExtensions returns prefilter extensions, pod add and remove.
@@ -394,7 +394,7 @@ func (p *preemptor) CandidatesToVictimsMap(candidates []preemption.Candidate) ma
 // considered for preemption.
 // We look at the node that is nominated for this pod and as long as there are
 // terminating pods on the node, we don't consider this for preempting more pods.
-func (p *preemptor) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) bool {
+func (p *preemptor) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) (bool, string) {
 	if pod.Spec.PreemptionPolicy != nil && *pod.Spec.PreemptionPolicy == v1.PreemptNever {
 		klog.V(5).InfoS("Pod is not eligible for preemption because of its preemptionPolicy", "pod", klog.KObj(pod), "preemptionPolicy", v1.PreemptNever)
 		return false, "not eligible due to preemptionPolicy=Never."
@@ -412,18 +412,18 @@ func (p *preemptor) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus 
 		// If the pod's nominated node is considered as UnschedulableAndUnresolvable by the filters,
 		// then the pod should be considered for preempting again.
 		if nominatedNodeStatus.Code() == framework.UnschedulableAndUnresolvable {
-			return true
+			return true, "nominated node is considered unscheduleable and unresolvable by filters, will be re-considered for preempting"
 		}
 
 		elasticQuotaSnapshotState, err := getElasticQuotaSnapshotState(p.state)
 		if err != nil {
 			klog.ErrorS(err, "Failed to read elasticQuotaSnapshot from cycleState", "elasticQuotaSnapshotKey", ElasticQuotaSnapshotKey)
-			return true
+			return true, "failed to read elasticQuotaSnapshot from cycleState"
 		}
 
 		nodeInfo, _ := nodeLister.Get(nomNodeName)
 		if nodeInfo == nil {
-			return true
+			return true, ""
 		}
 
 		podPriority := corev1helpers.PodPriority(pod)
@@ -466,7 +466,7 @@ func (p *preemptor) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus 
 			}
 		}
 	}
-	return true
+	return true, ""
 }
 
 func (p *preemptor) SelectVictimsOnNode(

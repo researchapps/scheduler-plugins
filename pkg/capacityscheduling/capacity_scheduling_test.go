@@ -731,7 +731,7 @@ func TestDryRunPreemption(t *testing.T) {
 			state := framework.NewCycleState()
 
 			// Some tests rely on PreFilter plugin to compute its CycleState.
-			preFilterStatus := fwk.RunPreFilterPlugins(ctx, state, tt.pod)
+			_, preFilterStatus := fwk.RunPreFilterPlugins(ctx, state, tt.pod)
 			if !preFilterStatus.IsSuccess() {
 				t.Errorf("Unexpected preFilterStatus: %v", preFilterStatus)
 			}
