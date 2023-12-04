@@ -28,6 +28,7 @@ import (
 
 	"github.com/paypal/load-watcher/pkg/watcher"
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/wait"
 	testutil "sigs.k8s.io/scheduler-plugins/test/util"
 
 	v1 "k8s.io/api/core/v1"
@@ -55,6 +56,10 @@ type testSharedLister struct {
 	nodeInfoMap map[string]*framework.NodeInfo
 }
 
+func (f *testSharedLister) StorageInfos() framework.StorageInfoLister {
+	return nil
+}
+
 func (f *testSharedLister) NodeInfos() framework.NodeInfoLister {
 	return f
 }
@@ -77,9 +82,9 @@ func (f *testSharedLister) Get(nodeName string) (*framework.NodeInfo, error) {
 
 func TestNew(t *testing.T) {
 	targetLoadPackingArgs := pluginConfig.TargetLoadPackingArgs{
+		TrimaranSpec:              pluginConfig.TrimaranSpec{WatcherAddress: "http://deadbeef:2020"},
 		TargetUtilization:         v1beta2.DefaultTargetUtilizationPercent,
 		DefaultRequestsMultiplier: v1beta2.DefaultRequestsMultiplier,
-		WatcherAddress:            "http://deadbeef:2020",
 	}
 	targetLoadPackingConfig := config.PluginConfig{
 		Name: Name,
@@ -112,9 +117,9 @@ func TestTargetLoadPackingScoring(t *testing.T) {
 	}
 
 	targetLoadPackingArgs := pluginConfig.TargetLoadPackingArgs{
+		TrimaranSpec:              pluginConfig.TrimaranSpec{WatcherAddress: "http://deadbeef:2020"},
 		TargetUtilization:         v1beta2.DefaultTargetUtilizationPercent,
 		DefaultRequestsMultiplier: v1beta2.DefaultRequestsMultiplier,
-		WatcherAddress:            "http://deadbeef:2020",
 	}
 	targetLoadPackingConfig := config.PluginConfig{
 		Name: Name,
@@ -246,11 +251,11 @@ func TestTargetLoadPackingScoring(t *testing.T) {
 				runtime.WithInformerFactory(informerFactory), runtime.WithSnapshotSharedLister(snapshot))
 			assert.Nil(t, err)
 			targetLoadPackingArgs := pluginConfig.TargetLoadPackingArgs{
+				TrimaranSpec:              pluginConfig.TrimaranSpec{WatcherAddress: server.URL},
 				TargetUtilization:         v1beta2.DefaultTargetUtilizationPercent,
-				WatcherAddress:            server.URL,
 				DefaultRequestsMultiplier: v1beta2.DefaultRequestsMultiplier,
 			}
-			p, err := New(&targetLoadPackingArgs, fh)
+			p, _ := New(&targetLoadPackingArgs, fh)
 			scorePlugin := p.(framework.ScorePlugin)
 			var actualList framework.NodeScoreList
 			for _, n := range tt.nodes {
@@ -336,7 +341,7 @@ func BenchmarkTargetLoadPackingPlugin(b *testing.B) {
 			bfbpArgs.WatcherAddress = server.URL
 			defer server.Close()
 
-			fh, err := st.NewFramework(registeredPlugins, "default-scheduler", runtime.WithClientSet(cs),
+			fh, err := st.NewFramework(registeredPlugins, "default-scheduler", wait.NeverStop, runtime.WithClientSet(cs),
 				runtime.WithInformerFactory(informerFactory), runtime.WithSnapshotSharedLister(snapshot))
 			assert.Nil(b, err)
 			pl, err := New(&bfbpArgs, fh)

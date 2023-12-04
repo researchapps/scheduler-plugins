@@ -22,21 +22,20 @@ import (
 	"time"
 
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler"
 	schedapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	fwkruntime "k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"sigs.k8s.io/scheduler-plugins/apis/scheduling"
 	"sigs.k8s.io/scheduler-plugins/apis/scheduling/v1alpha1"
 	"sigs.k8s.io/scheduler-plugins/pkg/capacityscheduling"
-	"sigs.k8s.io/scheduler-plugins/pkg/generated/clientset/versioned"
 	"sigs.k8s.io/scheduler-plugins/test/util"
 )
 
@@ -45,7 +44,7 @@ func TestCapacityScheduling(t *testing.T) {
 	testCtx.Ctx, testCtx.CancelFn = context.WithCancel(context.Background())
 
 	cs := kubernetes.NewForConfigOrDie(globalKubeConfig)
-	extClient := versioned.NewForConfigOrDie(globalKubeConfig)
+	extClient := util.NewClientOrDie(globalKubeConfig)
 	testCtx.ClientSet = cs
 	testCtx.KubeConfig = globalKubeConfig
 
@@ -131,7 +130,6 @@ func TestCapacityScheduling(t *testing.T) {
 			},
 			elasticQuotas: []*v1alpha1.ElasticQuota{
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq1", Namespace: "ns1"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -145,7 +143,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq2", Namespace: "ns2"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -189,7 +186,6 @@ func TestCapacityScheduling(t *testing.T) {
 			},
 			elasticQuotas: []*v1alpha1.ElasticQuota{
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq1", Namespace: "ns1"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -203,7 +199,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq2", Namespace: "ns2"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -276,7 +271,6 @@ func TestCapacityScheduling(t *testing.T) {
 			},
 			elasticQuotas: []*v1alpha1.ElasticQuota{
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq1", Namespace: "ns1"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -290,7 +284,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq2", Namespace: "ns2"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -333,7 +326,6 @@ func TestCapacityScheduling(t *testing.T) {
 			},
 			elasticQuotas: []*v1alpha1.ElasticQuota{
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq1", Namespace: "ns1"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -347,7 +339,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq2", Namespace: "ns2"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -391,7 +382,6 @@ func TestCapacityScheduling(t *testing.T) {
 			},
 			elasticQuotas: []*v1alpha1.ElasticQuota{
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq1", Namespace: "ns1"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -405,7 +395,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq2", Namespace: "ns2"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -453,7 +442,6 @@ func TestCapacityScheduling(t *testing.T) {
 			},
 			elasticQuotas: []*v1alpha1.ElasticQuota{
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq1", Namespace: "ns1"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -467,7 +455,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq2", Namespace: "ns2"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -481,7 +468,6 @@ func TestCapacityScheduling(t *testing.T) {
 					},
 				},
 				{
-					TypeMeta:   metav1.TypeMeta{Kind: "ElasticQuota", APIVersion: "scheduling.sigs.k8s.io/v1alpha1"},
 					ObjectMeta: metav1.ObjectMeta{Name: "eq3", Namespace: "ns3"},
 					Spec: v1alpha1.ElasticQuotaSpec{
 						Min: v1.ResourceList{
@@ -570,21 +556,17 @@ func TestCapacityScheduling(t *testing.T) {
 	}
 }
 
-func createElasticQuotas(ctx context.Context, client versioned.Interface, elasticQuotas []*v1alpha1.ElasticQuota) error {
+func createElasticQuotas(ctx context.Context, client client.Client, elasticQuotas []*v1alpha1.ElasticQuota) error {
 	for _, eq := range elasticQuotas {
-		_, err := client.SchedulingV1alpha1().ElasticQuotas(eq.Namespace).Create(ctx, eq, metav1.CreateOptions{})
-		if err != nil && !errors.IsAlreadyExists(err) {
+		if err := client.Create(ctx, eq); err != nil && !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 	}
 	return nil
 }
 
-func cleanupElasticQuotas(ctx context.Context, client versioned.Interface, elasticQuotas []*v1alpha1.ElasticQuota) {
+func cleanupElasticQuotas(ctx context.Context, client client.Client, elasticQuotas []*v1alpha1.ElasticQuota) {
 	for _, eq := range elasticQuotas {
-		err := client.SchedulingV1alpha1().ElasticQuotas(eq.Namespace).Delete(ctx, eq.Name, metav1.DeleteOptions{})
-		if err != nil {
-			klog.ErrorS(err, "Failed to clean up ElasticQuota", "elasticQuota", klog.KObj(eq))
-		}
+		_ = client.Delete(ctx, eq)
 	}
 }

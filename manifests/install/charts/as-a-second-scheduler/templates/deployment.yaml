@@ -2,7 +2,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: {{ .Values.controller.name }}
-  namespace: {{ .Values.controller.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: scheduler-plugins-controller
 spec:
@@ -15,7 +15,7 @@ spec:
       labels:
         app: scheduler-plugins-controller
     spec:
-      serviceAccountName: scheduler-plugins-controller
+      serviceAccountName: {{ .Values.controller.name }}
       containers:
       - name: scheduler-plugins-controller
         image: {{ .Values.controller.image }}
@@ -27,7 +27,7 @@ metadata:
   labels:
     component: scheduler
   name: {{ .Values.scheduler.name }}
-  namespace: {{ .Values.scheduler.namespace }}
+  namespace: {{ .Release.Namespace }}
 spec:
   selector:
     matchLabels:
@@ -79,4 +79,3 @@ spec:
       - name: scheduler-config
         configMap:
           name: scheduler-config
-

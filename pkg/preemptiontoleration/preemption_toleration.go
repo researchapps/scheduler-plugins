@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	policylisters "k8s.io/client-go/listers/policy/v1"
@@ -38,14 +37,13 @@ import (
 	"k8s.io/klog/v2"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	kubefeatures "k8s.io/kubernetes/pkg/features"
 	schedulerapisconfig "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config/validation"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/preemption"
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 	"k8s.io/kubernetes/pkg/scheduler/util"
-
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/scheduler-plugins/apis/config"
 )
 
@@ -67,7 +65,7 @@ type PreemptionToleration struct {
 	pdbLister           policylisters.PodDisruptionBudgetLister
 	priorityClassLister schedulinglisters.PriorityClassLister
 
-	clock   util.Clock
+	clock   clock.Clock
 	curTime time.Time
 }
 
@@ -93,7 +91,7 @@ func New(rawArgs runtime.Object, fh framework.Handle) (framework.Plugin, error) 
 		podLister:           fh.SharedInformerFactory().Core().V1().Pods().Lister(),
 		priorityClassLister: fh.SharedInformerFactory().Scheduling().V1().PriorityClasses().Lister(),
 		pdbLister:           getPDBLister(fh.SharedInformerFactory()),
-		clock:               util.RealClock{},
+		clock:               clock.RealClock{},
 	}
 	return &pl, nil
 }
@@ -320,10 +318,10 @@ func (pl *PreemptionToleration) calculateNumCandidates(numNodes int32) int32 {
 // considered for preemption.
 // We look at the node that is nominated for this pod and as long as there are
 // terminating pods on the node, we don't consider this for preempting more pods.
-func (pl *PreemptionToleration) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) bool {
+func (pl *PreemptionToleration) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) (bool, string) {
 	if pod.Spec.PreemptionPolicy != nil && *pod.Spec.PreemptionPolicy == v1.PreemptNever {
 		klog.V(5).InfoS("Pod is not eligible for preemption because it has a preemptionPolicy of Never", "pod", klog.KObj(pod))
-		return false
+		return false, "not eligible due to preemptionPolicy=Never."
 	}
 	nodeInfos := pl.fh.SnapshotSharedLister().NodeInfos()
 	nomNodeName := pod.Status.NominatedNodeName
@@ -331,20 +329,19 @@ func (pl *PreemptionToleration) PodEligibleToPreemptOthers(pod *v1.Pod, nominate
 		// If the pod's nominated node is considered as UnschedulableAndUnresolvable by the filters,
 		// then the pod should be considered for preempting again.
 		if nominatedNodeStatus.Code() == framework.UnschedulableAndUnresolvable {
-			return true
+			return true, ""
 		}
 
 		if nodeInfo, _ := nodeInfos.Get(nomNodeName); nodeInfo != nil {
 			podPriority := corev1helpers.PodPriority(pod)
 			for _, p := range nodeInfo.Pods {
 				if p.Pod.DeletionTimestamp != nil && corev1helpers.PodPriority(p.Pod) < podPriority {
-					// There is a terminating pod on the nominated node.
-					return false
+					return false, "not eligible due to a terminating pod on the nominated node."
 				}
 			}
 		}
 	}
-	return true
+	return true, ""
 }
 
 // filterPodsWithPDBViolation groups the given "pods" into two groups of "violatingPods"
@@ -400,8 +397,5 @@ func filterPodsWithPDBViolation(podInfos []*framework.PodInfo, pdbs []*policy.Po
 }
 
 func getPDBLister(informerFactory informers.SharedInformerFactory) policylisters.PodDisruptionBudgetLister {
-	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.PodDisruptionBudget) {
-		return informerFactory.Policy().V1().PodDisruptionBudgets().Lister()
-	}
-	return nil
+	return informerFactory.Policy().V1().PodDisruptionBudgets().Lister()
 }

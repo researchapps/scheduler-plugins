@@ -43,14 +43,13 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/util"
 )
 
-const (
-	// Name of the plugin used in the plugin registry and configurations.
-	Name = names.DefaultPreemption
-)
+// Name of the plugin used in the plugin registry and configurations.
+const Name = names.DefaultPreemption
 
 // DefaultPreemption is a PostFilter plugin implements the preemption logic.
 type DefaultPreemption struct {
 	fh        framework.Handle
+	fts       feature.Features
 	args      config.DefaultPreemptionArgs
 	podLister corelisters.PodLister
 	pdbLister policylisters.PodDisruptionBudgetLister
@@ -74,9 +73,10 @@ func New(dpArgs runtime.Object, fh framework.Handle, fts feature.Features) (fram
 	}
 	pl := DefaultPreemption{
 		fh:        fh,
+		fts:       fts,
 		args:      *args,
 		podLister: fh.SharedInformerFactory().Core().V1().Pods().Lister(),
-		pdbLister: getPDBLister(fh.SharedInformerFactory(), fts.EnablePodDisruptionBudget),
+		pdbLister: getPDBLister(fh.SharedInformerFactory()),
 	}
 	return &pl, nil
 }
@@ -95,7 +95,12 @@ func (pl *DefaultPreemption) PostFilter(ctx context.Context, state *framework.Cy
 		State:      state,
 		Interface:  pl,
 	}
-	return pe.Preempt(ctx, pod, m)
+
+	result, status := pe.Preempt(ctx, pod, m)
+	if status.Message() != "" {
+		return result, framework.NewStatus(status.Code(), "preemption: "+status.Message())
+	}
+	return result, status
 }
 
 // calculateNumCandidates returns the number of candidates the FindCandidates
@@ -122,7 +127,7 @@ func (pl *DefaultPreemption) GetOffsetAndNumCandidates(numNodes int32) (int32, i
 // This function is not applicable for out-of-tree preemption plugins that exercise
 // different preemption candidates on the same nominated node.
 func (pl *DefaultPreemption) CandidatesToVictimsMap(candidates []preemption.Candidate) map[string]*extenderv1.Victims {
-	m := make(map[string]*extenderv1.Victims)
+	m := make(map[string]*extenderv1.Victims, len(candidates))
 	for _, c := range candidates {
 		m[c.Name()] = c.Victims()
 	}
@@ -170,7 +175,7 @@ func (pl *DefaultPreemption) SelectVictimsOnNode(
 
 	// No potential victims are found, and so we don't need to evaluate the node again since its state didn't change.
 	if len(potentialVictims) == 0 {
-		message := fmt.Sprintf("No victims found on node %v for preemptor pod %v", nodeInfo.Node().Name, pod.Name)
+		message := fmt.Sprintf("No preemption victims found for incoming pod")
 		return nil, 0, framework.NewStatus(framework.UnschedulableAndUnresolvable, message)
 	}
 
@@ -222,37 +227,58 @@ func (pl *DefaultPreemption) SelectVictimsOnNode(
 	return victims, numViolatingVictim, framework.NewStatus(framework.Success)
 }
 
-// PodEligibleToPreemptOthers determines whether this pod should be considered
-// for preempting other pods or not. If this pod has already preempted other
-// pods and those are in their graceful termination period, it shouldn't be
-// considered for preemption.
-// We look at the node that is nominated for this pod and as long as there are
-// terminating pods on the node, we don't consider this for preempting more pods.
-func (pl *DefaultPreemption) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) bool {
+// PodEligibleToPreemptOthers returns one bool and one string. The bool
+// indicates whether this pod should be considered for preempting other pods or
+// not. The string includes the reason if this pod isn't eligible.
+// There're several reasons:
+//  1. The pod has a preemptionPolicy of Never.
+//  2. The pod has already preempted other pods and the victims are in their graceful termination period.
+//     Currently we check the node that is nominated for this pod, and as long as there are
+//     terminating pods on this node, we don't attempt to preempt more pods.
+func (pl *DefaultPreemption) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus *framework.Status) (bool, string) {
 	if pod.Spec.PreemptionPolicy != nil && *pod.Spec.PreemptionPolicy == v1.PreemptNever {
-		klog.V(5).InfoS("Pod is not eligible for preemption because it has a preemptionPolicy of Never", "pod", klog.KObj(pod))
-		return false
+		return false, "not eligible due to preemptionPolicy=Never."
 	}
+
 	nodeInfos := pl.fh.SnapshotSharedLister().NodeInfos()
 	nomNodeName := pod.Status.NominatedNodeName
 	if len(nomNodeName) > 0 {
 		// If the pod's nominated node is considered as UnschedulableAndUnresolvable by the filters,
 		// then the pod should be considered for preempting again.
 		if nominatedNodeStatus.Code() == framework.UnschedulableAndUnresolvable {
-			return true
+			return true, ""
 		}
 
 		if nodeInfo, _ := nodeInfos.Get(nomNodeName); nodeInfo != nil {
 			podPriority := corev1helpers.PodPriority(pod)
 			for _, p := range nodeInfo.Pods {
-				if p.Pod.DeletionTimestamp != nil && corev1helpers.PodPriority(p.Pod) < podPriority {
+				if corev1helpers.PodPriority(p.Pod) < podPriority && podTerminatingByPreemption(p.Pod, pl.fts.EnablePodDisruptionConditions) {
 					// There is a terminating pod on the nominated node.
-					return false
+					return false, "not eligible due to a terminating pod on the nominated node."
 				}
 			}
 		}
 	}
-	return true
+	return true, ""
+}
+
+// podTerminatingByPreemption returns the pod's terminating state if feature PodDisruptionConditions is not enabled.
+// Otherwise, it additionally checks if the termination state is caused by scheduler preemption.
+func podTerminatingByPreemption(p *v1.Pod, enablePodDisruptionConditions bool) bool {
+	if p.DeletionTimestamp == nil {
+		return false
+	}
+
+	if !enablePodDisruptionConditions {
+		return true
+	}
+
+	for _, condition := range p.Status.Conditions {
+		if condition.Type == v1.DisruptionTarget {
+			return condition.Status == v1.ConditionTrue && condition.Reason == v1.PodReasonPreemptionByScheduler
+		}
+	}
+	return false
 }
 
 // filterPodsWithPDBViolation groups the given "pods" into two groups of "violatingPods"
@@ -277,6 +303,7 @@ func filterPodsWithPDBViolation(podInfos []*framework.PodInfo, pdbs []*policy.Po
 				}
 				selector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
 				if err != nil {
+					// This object has an invalid selector, it does not match the pod
 					continue
 				}
 				// A PDB with a nil or empty selector matches nothing.
@@ -307,9 +334,6 @@ func filterPodsWithPDBViolation(podInfos []*framework.PodInfo, pdbs []*policy.Po
 	return violatingPodInfos, nonViolatingPodInfos
 }
 
-func getPDBLister(informerFactory informers.SharedInformerFactory, enablePodDisruptionBudget bool) policylisters.PodDisruptionBudgetLister {
-	if enablePodDisruptionBudget {
-		return informerFactory.Policy().V1().PodDisruptionBudgets().Lister()
-	}
-	return nil
+func getPDBLister(informerFactory informers.SharedInformerFactory) policylisters.PodDisruptionBudgetLister {
+	return informerFactory.Policy().V1().PodDisruptionBudgets().Lister()
 }

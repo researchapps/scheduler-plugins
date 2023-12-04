@@ -1,11 +1,10 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    api-approved.kubernetes.io: https://github.com/kubernetes/enhancements/pull/1870 # edited manually
-    controller-gen.kubebuilder.io/version: v0.6.2
+    api-approved.kubernetes.io: https://github.com/kubernetes/enhancements/pull/1870
+    controller-gen.kubebuilder.io/version: v0.11.1
   creationTimestamp: null
   name: noderesourcetopologies.topology.node.k8s.io
 spec:
@@ -19,7 +18,7 @@ spec:
     singular: noderesourcetopology
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - name: v1alpha2
     schema:
       openAPIV3Schema:
         description: NodeResourceTopology describes node resources and their topology.
@@ -29,6 +28,20 @@ spec:
               of an object. Servers should convert recognized schemas to the latest
               internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
             type: string
+          attributes:
+            description: AttributeList contains an array of AttributeInfo objects.
+            items:
+              description: AttributeInfo contains one attribute of a Zone.
+              properties:
+                name:
+                  type: string
+                value:
+                  type: string
+              required:
+              - name
+              - value
+              type: object
+            type: array
           kind:
             description: 'Kind is a string value representing the REST resource this
               object represents. Servers may infer this from the endpoint the client
@@ -37,6 +50,8 @@ spec:
           metadata:
             type: object
           topologyPolicies:
+            description: 'DEPRECATED (to be removed in v1beta1): use top level attributes
+              if needed'
             items:
               type: string
             type: array
@@ -132,14 +147,7 @@ spec:
               type: object
             type: array
         required:
-        - topologyPolicies
         - zones
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

@@ -17,6 +17,7 @@ limitations under the License.
 package trimaran
 
 import (
+	"math"
 	"reflect"
 	"strconv"
 	"testing"
@@ -180,6 +181,76 @@ func TestGetResourceRequested(t *testing.T) {
 		Memory:   4096,
 	}
 	assert.EqualValues(t, resExpected, res)
+
+	ovhd = 0
+	initCPUReq = 0
+	initMemReq = 0
+	contCPUReq = []int64{0, 0, 1000}
+	contMemReq = []int64{0, 200 * 1024 * 1024, 400 * 1024 * 1024}
+
+	pod = getPodWithContainersAndOverhead(ovhd, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	res = GetResourceRequested(pod)
+	resExpected = &framework.Resource{
+		MilliCPU: 1000,
+		Memory:   600 * 1024 * 1024,
+	}
+	assert.EqualValues(t, resExpected, res)
+}
+
+func TestGetResourceLimits(t *testing.T) {
+	var ovhd int64 = 10
+	var initCPUReq int64 = 100
+	var initMemReq int64 = 512
+	contCPUReq := []int64{1000, 500}
+	contMemReq := []int64{2048, 1024}
+
+	var initCPULimit int64 = 2000
+	var initMemLimit int64 = 4096
+	contCPULimit := []int64{1000, 500}
+	contMemLimit := []int64{2048, 1024}
+
+	pod := getPodWithContainersAndOverhead(ovhd, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	pod = getPodWithLimits(pod, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+
+	res := GetResourceLimits(pod)
+	resExpected := &framework.Resource{
+		MilliCPU: 2010,
+		Memory:   4096,
+	}
+	assert.EqualValues(t, resExpected, res)
+
+	contCPULimitShort := []int64{4000}
+	pod = getPodWithLimits(pod, initCPULimit, initMemLimit, contCPULimitShort, contMemLimit)
+	res = GetResourceLimits(pod)
+	resExpected = &framework.Resource{
+		MilliCPU: 2010,
+		Memory:   4096,
+	}
+	assert.EqualValues(t, resExpected, res)
+
+	contCPULimit = []int64{1000, 2500}
+	contMemLimit = []int64{4096, 2048}
+	pod = getPodWithLimits(pod, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+	res = GetResourceLimits(pod)
+	resExpected = &framework.Resource{
+		MilliCPU: 3510,
+		Memory:   6144,
+	}
+	assert.EqualValues(t, resExpected, res)
+
+	var ovhd0 int64 = 0
+	contCPUReq0 := []int64{1000, 500, 0}
+	contMemReq0 := []int64{2048, 1024, 0}
+	contCPULimit0 := []int64{0, 0, 1000}
+	contMemLimit0 := []int64{0, 2048, 0}
+	pod0 := getPodWithContainersAndOverhead(ovhd0, initCPUReq, initMemReq, contCPUReq0, contMemReq0)
+	pod0 = getPodWithLimits(pod0, initCPULimit, initMemLimit, contCPULimit0, contMemLimit0)
+	res0 := GetResourceLimits(pod0)
+	resExpected = &framework.Resource{
+		MilliCPU: 2000,
+		Memory:   4096,
+	}
+	assert.EqualValues(t, resExpected, res0)
 }
 
 func TestGetMuSigma(t *testing.T) {
@@ -297,9 +368,237 @@ func TestGetMuSigma(t *testing.T) {
 	}
 }
 
+func TestGetNodeRequestsAndLimits(t *testing.T) {
+	nr := map[v1.ResourceName]string{
+		v1.ResourceCPU:    "8000m",
+		v1.ResourceMemory: "6Ki",
+	}
+
+	testNode := st.MakeNode().Name("test-node").Capacity(nr).Obj()
+
+	nr = map[v1.ResourceName]string{
+		v1.ResourceCPU:    "1600m",
+		v1.ResourceMemory: "6Ki",
+	}
+
+	testNodeWithLowNodeCapacity := st.MakeNode().Name("test-node").Capacity(nr).Obj()
+
+	var initCPUReq int64 = 100
+	var initMemReq int64 = 2048
+	contCPUReq := []int64{1000, 500}
+	contMemReq := []int64{512, 1024}
+
+	var initCPULimit int64 = 500
+	var initMemLimit int64 = 2048
+	contCPULimit := []int64{1500, 500}
+	contMemLimit := []int64{1024, 1024}
+
+	pod := getPodWithContainersAndOverhead(0, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	pod = getPodWithLimits(pod, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+
+	pod1 := getPodWithContainersAndOverhead(0, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	pod1 = getPodWithLimits(pod1, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+	podInfo1, _ := framework.NewPodInfo(pod1)
+
+	pod2 := getPodWithContainersAndOverhead(0, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	pod2 = getPodWithLimits(pod2, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+	podInfo2, _ := framework.NewPodInfo(pod2)
+
+	contCPULimit = []int64{1000, 1000}
+	contMemLimit = []int64{1024, 2048}
+
+	pod3 := getPodWithContainersAndOverhead(0, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	pod3 = getPodWithLimits(pod3, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+	podInfo3, _ := framework.NewPodInfo(pod3)
+
+	podRequests := GetResourceRequested(pod)
+	podLimits := GetResourceLimits(pod)
+
+	allocatableResources := testNodeWithLowNodeCapacity.Status.Allocatable
+	amCpu := allocatableResources[v1.ResourceCPU]
+	capCpu := amCpu.MilliValue()
+	amMem := allocatableResources[v1.ResourceMemory]
+	capMem := amMem.Value()
+
+	contCPULimit = []int64{1000, 400}
+
+	pod4 := getPodWithContainersAndOverhead(0, initCPUReq, initMemReq, contCPUReq, contMemReq)
+	pod4 = getPodWithLimits(pod4, initCPULimit, initMemLimit, contCPULimit, contMemLimit)
+
+	pod4Requests := GetResourceRequested(pod4)
+	pod4Limits := GetResourceLimits(pod4)
+
+	type args struct {
+		podsOnNode  []*framework.PodInfo
+		node        *v1.Node
+		pod         *v1.Pod
+		podRequests *framework.Resource
+		podLimits   *framework.Resource
+	}
+	tests := []struct {
+		name string
+		args args
+		want *NodeRequestsAndLimits
+	}{
+		{
+			name: "test-0",
+			args: args{
+				podsOnNode: []*framework.PodInfo{
+					podInfo1,
+					podInfo2},
+				node:        testNode,
+				pod:         pod,
+				podRequests: podRequests,
+				podLimits:   podLimits,
+			},
+			want: &NodeRequestsAndLimits{
+				NodeRequest: &framework.Resource{
+					MilliCPU: 3 * 1500,
+					Memory:   3 * 2048,
+				},
+				NodeLimit: &framework.Resource{
+					MilliCPU: 3 * 2000,
+					Memory:   3 * 2048,
+				},
+				NodeRequestMinusPod: &framework.Resource{
+					MilliCPU: 2 * 1500,
+					Memory:   2 * 2048,
+				},
+				NodeLimitMinusPod: &framework.Resource{
+					MilliCPU: 2 * 2000,
+					Memory:   2 * 2048,
+				},
+				Nodecapacity: &framework.Resource{
+					MilliCPU: 8000,
+					Memory:   6 * 1024,
+				},
+			},
+		},
+		{
+			name: "test-1",
+			args: args{
+				podsOnNode: []*framework.PodInfo{
+					podInfo3},
+				node:        testNode,
+				pod:         pod,
+				podRequests: podRequests,
+				podLimits:   podLimits,
+			},
+			want: &NodeRequestsAndLimits{
+				NodeRequest: &framework.Resource{
+					MilliCPU: 2 * 1500,
+					Memory:   2 * 2048,
+				},
+				NodeLimit: &framework.Resource{
+					MilliCPU: 2 * 2000,
+					Memory:   2*2048 + 1024,
+				},
+				NodeRequestMinusPod: &framework.Resource{
+					MilliCPU: 1500,
+					Memory:   2048,
+				},
+				NodeLimitMinusPod: &framework.Resource{
+					MilliCPU: 2000,
+					Memory:   2048 + 1024,
+				},
+				Nodecapacity: &framework.Resource{
+					MilliCPU: 8000,
+					Memory:   6 * 1024,
+				},
+			},
+		},
+		{
+			name: "test-2",
+			// Test case for Node with low capacity than the requested Pod limits
+			args: args{
+				podsOnNode:  []*framework.PodInfo{},
+				node:        testNodeWithLowNodeCapacity,
+				pod:         pod,
+				podRequests: podRequests,
+				podLimits:   podLimits,
+			},
+			want: &NodeRequestsAndLimits{
+				NodeRequest: &framework.Resource{
+					MilliCPU: int64(math.Min(float64(GetResourceRequested(pod).MilliCPU), float64(capCpu))),
+					Memory:   int64(math.Min(float64(GetResourceRequested(pod).Memory), float64(capMem))),
+				},
+				NodeLimit: &framework.Resource{
+					MilliCPU: int64(math.Max(float64(GetResourceRequested(pod).MilliCPU), float64(GetResourceLimits(pod).MilliCPU))),
+					Memory:   int64(math.Max(float64(GetResourceRequested(pod).Memory), float64(GetResourceLimits(pod).Memory))),
+				},
+				NodeRequestMinusPod: &framework.Resource{
+					MilliCPU: 0,
+					Memory:   0,
+				},
+				NodeLimitMinusPod: &framework.Resource{
+					MilliCPU: 0,
+					Memory:   0,
+				},
+				Nodecapacity: &framework.Resource{
+					MilliCPU: capCpu,
+					Memory:   capMem,
+				},
+			},
+		},
+		{
+			name: "test-3",
+			// Test case for Pod with more Requests than Limits
+			args: args{
+				podsOnNode:  []*framework.PodInfo{},
+				node:        testNodeWithLowNodeCapacity,
+				pod:         pod4,
+				podRequests: pod4Requests,
+				podLimits:   pod4Limits,
+			},
+			want: &NodeRequestsAndLimits{
+				NodeRequest: &framework.Resource{
+					MilliCPU: int64(math.Min(float64(GetResourceRequested(pod4).MilliCPU), float64(capCpu))),
+					Memory:   int64(math.Min(float64(GetResourceRequested(pod4).Memory), float64(capMem))),
+				},
+				NodeLimit: &framework.Resource{
+					MilliCPU: int64(math.Min(
+						math.Max(float64(GetResourceRequested(pod4).MilliCPU), float64(GetResourceLimits(pod4).MilliCPU)),
+						float64(capCpu))),
+					Memory: int64(math.Min(
+						math.Max(float64(GetResourceRequested(pod4).Memory), float64(GetResourceLimits(pod4).Memory)),
+						float64(capMem))),
+				},
+				NodeRequestMinusPod: &framework.Resource{
+					MilliCPU: 0,
+					Memory:   0,
+				},
+				NodeLimitMinusPod: &framework.Resource{
+					MilliCPU: 0,
+					Memory:   0,
+				},
+				Nodecapacity: &framework.Resource{
+					MilliCPU: capCpu,
+					Memory:   capMem,
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *NodeRequestsAndLimits
+			SetMaxLimits(tt.args.podRequests, tt.args.podLimits)
+			if got = GetNodeRequestsAndLimits(tt.args.podsOnNode, tt.args.node, tt.args.pod,
+				tt.args.podRequests, tt.args.podLimits); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetNodeRequestsAndLimits(): got = {%+v, %+v, %+v, %+v, %+v}, want = {%+v, %+v, %+v, %+v, %+v}",
+					*got.NodeRequest, *got.NodeLimit, *got.NodeRequestMinusPod, *got.NodeLimitMinusPod, *got.Nodecapacity,
+					*tt.want.NodeRequest, *tt.want.NodeLimit, *tt.want.NodeRequestMinusPod, *tt.want.NodeLimitMinusPod, *tt.want.Nodecapacity)
+			}
+			// The below asserts should hold good for all test cases, ideally; "test-3" exercises this by setting NodeLimit less than NodeRequest
+			if tt.name == "test-3" {
+				assert.LessOrEqual(t, (*got.NodeRequest).MilliCPU, (*got.NodeLimit).MilliCPU)
+				assert.LessOrEqual(t, (*got.NodeRequest).Memory, (*got.NodeLimit).Memory)
+			}
+		})
+	}
+}
+
 // getPodWithContainersAndOverhead : length of contCPUReq and contMemReq should be same
 func getPodWithContainersAndOverhead(overhead int64, initCPUReq int64, initMemReq int64, contCPUReq []int64, contMemReq []int64) *v1.Pod {
-
 	newPod := st.MakePod()
 	newPod.Spec.Overhead = make(map[v1.ResourceName]resource.Quantity)
 	newPod.Spec.Overhead[v1.ResourceCPU] = *resource.NewMilliQuantity(overhead, resource.DecimalSI)
@@ -324,4 +623,22 @@ func getPodWithContainersAndOverhead(overhead int64, initCPUReq int64, initMemRe
 		newPod.Spec.Containers[i].Resources.Limits[v1.ResourceMemory] = *resource.NewQuantity(contMemReq[i], resource.DecimalSI)
 	}
 	return newPod.Obj()
+}
+
+// getPodWithLimits : length of contCPULimit and contMemLimit should be same as number on containers
+func getPodWithLimits(pod *v1.Pod, initCPULimit int64, initMemLimit int64, contCPULimit []int64, contMemLimit []int64) *v1.Pod {
+	if len(contCPULimit) != len(contMemLimit) || len(contCPULimit) != len(pod.Spec.Containers) {
+		return pod
+	}
+
+	pod.Spec.InitContainers[0].Resources.Limits = make(map[v1.ResourceName]resource.Quantity)
+	pod.Spec.InitContainers[0].Resources.Limits[v1.ResourceCPU] = *resource.NewMilliQuantity(initCPULimit, resource.DecimalSI)
+	pod.Spec.InitContainers[0].Resources.Limits[v1.ResourceMemory] = *resource.NewQuantity(initMemLimit, resource.DecimalSI)
+
+	for i := 0; i < len(pod.Spec.Containers); i++ {
+		pod.Spec.Containers[i].Resources.Limits = make(map[v1.ResourceName]resource.Quantity)
+		pod.Spec.Containers[i].Resources.Limits[v1.ResourceCPU] = *resource.NewMilliQuantity(contCPULimit[i], resource.DecimalSI)
+		pod.Spec.Containers[i].Resources.Limits[v1.ResourceMemory] = *resource.NewQuantity(contMemLimit[i], resource.DecimalSI)
+	}
+	return pod
 }
