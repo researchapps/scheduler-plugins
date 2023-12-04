@@ -412,13 +412,13 @@ func (p *preemptor) PodEligibleToPreemptOthers(pod *v1.Pod, nominatedNodeStatus 
 		// If the pod's nominated node is considered as UnschedulableAndUnresolvable by the filters,
 		// then the pod should be considered for preempting again.
 		if nominatedNodeStatus.Code() == framework.UnschedulableAndUnresolvable {
-			return true, "nominated node is considered unscheduleable and unresolvable by filters, will be re-considered for preempting"
+			return true, ""
 		}
 
 		elasticQuotaSnapshotState, err := getElasticQuotaSnapshotState(p.state)
 		if err != nil {
 			klog.ErrorS(err, "Failed to read elasticQuotaSnapshot from cycleState", "elasticQuotaSnapshotKey", ElasticQuotaSnapshotKey)
-			return true, "failed to read elasticQuotaSnapshot from cycleState"
+			return true, ""
 		}
 
 		nodeInfo, _ := nodeLister.Get(nomNodeName)
